@@ -1,0 +1,2759 @@
+# ---------------- CONSOLE PART --------------- #
+
+# ------------------------------------------------------------------------------
+# MACRO: display_label
+#
+# Description: Display game label
+# Registers use: $a0, $v0
+# ------------------------------------------------------------------------------
+.macro display_label
+	la $a0, gomoku_art1
+    li $v0, 4
+    syscall
+    la $a0, gomoku_art2
+    li $v0, 4
+    syscall
+    la $a0, gomoku_art3
+    li $v0, 4
+    syscall
+    la $a0, gomoku_art4
+    li $v0, 4
+    syscall
+    la $a0, gomoku_art5
+    li $v0, 4
+    syscall
+    la $a0, gomoku_art6
+    li $v0, 4
+    syscall
+.end_macro 
+
+# ------------------------------------------------------------------------------
+# MACRO: choose_mode
+#
+# Description: Choose default mode or custom mode
+# Modifies: $s1 (SIZE), $s2 (NUM_TO_WIN), $s5(TIME_LIMIT), $s5(ADD_TIME), $t9 (flag)
+# Registers use: $t0-$t2, $t9, $s1-$s2, $s5, $a0-$a1, $v0
+# ------------------------------------------------------------------------------
+.macro choose_mode
+	sw $zero, player1_score
+	sw $zero, player2_score
+	sw $zero, ties
+	li $t0, 1
+	sw $t0, reset_score
+	
+    mode_loop:
+        # Display mode selection prompt
+        la $a0, strChooseMode
+        li $v0, 4
+        syscall
+        
+        # Read input
+        la $a0, inputBuffer
+        li $a1, 3
+        li $v0, 8
+        syscall
+        
+        # Check input
+        lb $t0, inputBuffer
+        li $t1, 100      # 'd'
+        beq $t0, $t1, default_mode
+        li $t1, 99       # 'c'
+        beq $t0, $t1, custom_mode
+        
+        # Invalid input
+        la $a0, strInvalidDC
+        li $v0, 4
+        syscall
+        j mode_loop
+        
+    default_mode:
+        # Set default values (15x15 board, 5 to win, 600s time limit)
+        li $s1, 15
+        sw $s1, SIZE
+        li $s2, 5
+        sw $s2, NUM_TO_WIN
+        li $s5, 600
+        sw $s5, TIME_LIMIT
+        li $s5, 0
+        sw $s5, ADD_TIME
+        li $v0, 0
+        sw $v0, game_mode
+        j mode_done
+        
+    custom_mode:
+        # ---- 1. Get board size
+        size_loop:
+            la $a0, strSize
+            li $v0, 4
+            syscall
+            
+            # Read size input as string
+            la $a0, inputBuffer
+            li $a1, 10
+            li $v0, 8
+            syscall
+            
+            # Check if each character is a digit (0-9)
+            li $t9, 1              # flag = 1 (valid)
+            la $t0, inputBuffer    # pointer to string
+            
+        check_size_digit:
+            lb $t1, ($t0)         # load current character
+            beqz $t1, end_size_check  # end of string
+            
+            # Check if character is newline (end of input)
+            li $t2, 10
+            beq $t1, $t2, end_size_check
+            
+            # Check if character is a digit (0-9)
+            li $t2, '0'
+            blt $t1, $t2, invalid_size_flag
+            li $t2, '9'
+            bgt $t1, $t2, invalid_size_flag
+            
+            addi $t0, $t0, 1       # move to next character
+            j check_size_digit
+            
+        invalid_size_flag:
+            li $t9, 0              # flag = 0 (invalid)
+            
+        end_size_check:
+            beqz $t9, invalid_size_digit  # if flag == 0, invalid
+            
+            # Convert ASCII digits to integer
+            la $t0, inputBuffer
+            li $s1, 0              # initialize result
+            
+        convert_size:
+            lb $t1, ($t0)          # load current character
+            beqz $t1, end_convert_size  # end of string
+            li $t2, 10
+            beq $t1, $t2, end_convert_size  # newline
+            
+            # Multiply current result by 10
+            li $t2, 10
+            mul $s1, $s1, $t2
+            
+            # Add current digit
+            sub $t1, $t1, '0'     # convert ASCII to integer
+            add $s1, $s1, $t1
+            
+            addi $t0, $t0, 1       # move to next character
+            j convert_size
+            
+        end_convert_size:
+            # Validate size (1-100)
+            li $t0, 1
+            blt $s1, $t0, invalid_size
+            li $t0, 100
+            bgt $s1, $t0, invalid_size
+            
+            j get_num_to_win
+            
+        invalid_size:
+            la $a0, strInvalid
+            li $v0, 4
+            syscall
+            j size_loop
+            
+        invalid_size_digit:
+        	la $a0, strInvalidDigit
+            li $v0, 4
+            syscall
+            j size_loop
+                
+    get_num_to_win:
+        # ---- 2. Get number to win
+        num_loop:
+            la $a0, strNumToWin
+            li $v0, 4
+            syscall
+            
+            # Read num to win input as string
+            la $a0, inputBuffer
+            li $a1, 10
+            li $v0, 8
+            syscall
+            
+            # Check if each character is a digit (0-9)
+            li $t9, 1              # flag = 1 (valid)
+            la $t0, inputBuffer    # pointer to string
+            
+        check_num_digit:
+            lb $t1, ($t0)         # load current character
+            beqz $t1, end_num_check  # end of string
+            
+            # Check if character is newline (end of input)
+            li $t2, 10
+            beq $t1, $t2, end_num_check
+            
+            # Check if character is a digit (0-9)
+            li $t2, '0'
+            blt $t1, $t2, invalid_num_flag
+            li $t2, '9'
+            bgt $t1, $t2, invalid_num_flag
+            
+            addi $t0, $t0, 1       # move to next character
+            j check_num_digit
+            
+        invalid_num_flag:
+            li $t9, 0              # flag = 0 (invalid)
+            
+        end_num_check:
+            beqz $t9, invalid_num_digit  # if flag == 0, invalid
+            
+            # Convert ASCII digits to integer
+            la $t0, inputBuffer
+            li $s2, 0              # initialize result
+            
+        convert_num:
+            lb $t1, ($t0)         # load current character
+            beqz $t1, end_convert_num  # end of string
+            li $t2, 10
+            beq $t1, $t2, end_convert_num  # newline
+            
+            # Multiply current result by 10
+            li $t2, 10
+            mul $s2, $s2, $t2
+            
+            # Add current digit
+            sub $t1, $t1, '0'     # convert ASCII to integer
+            add $s2, $s2, $t1
+            
+            addi $t0, $t0, 1       # move to next character
+            j convert_num
+            
+        end_convert_num:
+            # Validate num to win (1-10)
+            li $t0, 1
+            blt $s2, $t0, invalid_num
+            li $t0, 10
+            bgt $s2, $t0, invalid_num
+            
+            j get_time_limit
+            
+        invalid_num:
+            la $a0, strInvalid
+            li $v0, 4
+            syscall
+            j num_loop
+            
+       invalid_num_digit:
+        	la $a0, strInvalidDigit
+            li $v0, 4
+            syscall
+            j num_loop     
+                    
+    get_time_limit:
+        # ---- 3. Get time limit
+        time_loop:
+            la $a0, strTimeLimit
+            li $v0, 4
+            syscall
+            
+            # Read time limit input as string
+            la $a0, inputBuffer
+            li $a1, 10
+            li $v0, 8
+            syscall
+            
+            # Check for 'i' (infinite time)
+            lb $t0, inputBuffer
+            li $t1, 105      # 'i'
+            beq $t0, $t1, infinite_time
+            
+            # Check if each character is a digit (0-9)
+            li $t9, 1              # flag = 1 (valid)
+            la $t0, inputBuffer    # pointer to string (use $t3 instead of $t0)
+            
+        check_time_digit:
+            lb $t1, ($t0)          # load current character
+            beqz $t1, end_time_check  # end of string
+            
+            # Check if character is newline (end of input)
+            li $t2, 10
+            beq $t1, $t2, end_time_check
+            
+            # Check if character is a digit (0-9)
+            li $t2, '0'
+            blt $t1, $t2, invalid_time_flag
+            li $t2, '9'
+            bgt $t1, $t2, invalid_time_flag
+            
+            addi $t0, $t0, 1       # move to next character
+            j check_time_digit
+            
+        invalid_time_flag:
+            li $t9, 0              # flag = 0 (invalid)
+            
+        end_time_check:
+            beqz $t9, invalid_time_digit  # if flag == 0, invalid
+            
+            # Convert ASCII digits to integer
+            la $t0, inputBuffer    # pointer to string
+            li $s5, 0              # initialize result
+            
+        convert_time:
+            lb $t1, ($t0)          # load current character
+            beqz $t1, end_convert_time  # end of string
+            li $t2, 10
+            beq $t1, $t2, end_convert_time  # newline
+            
+            # Multiply current result by 10
+            li $t2, 10
+            mul $s5, $s5, $t2
+            
+            # Add current digit
+            sub $t1, $t1, '0'      # convert ASCII to integer
+            add $s5, $s5, $t1
+            
+            addi $t0, $t0, 1       # move to next character
+            j convert_time
+            
+        end_convert_time:
+            # Validate time limit (1-1000)
+            li $t1, 1
+            blt $s5, $t1, invalid_time
+            li $t1, 1000
+            bgt $s5, $t1, invalid_time
+            
+            sw $s5, TIME_LIMIT
+            j time_done
+                
+        infinite_time:
+            li $s5, -1          # -1 indicates infinite time
+            sw $s5, TIME_LIMIT
+            j time_done
+            
+            time_done:
+            # Check if time is infinite
+            li $t0, -1
+            beq $s5, $t0, set_add_time_zero
+            
+            # ---- 4. Get additional time per move (0-10)
+            add_time_loop:
+                la $a0, strAddTime
+                li $v0, 4
+                syscall
+                
+                # Read add time input as string
+                la $a0, inputBuffer
+                li $a1, 10
+                li $v0, 8
+                syscall
+                
+                # Check if each character is a digit (0-9)
+                li $t9, 1              # flag = 1 (valid)
+                la $t0, inputBuffer    # pointer to string
+                
+            check_add_time_digit:
+                lb $t1, ($t0)         # load current character
+                beqz $t1, end_add_time_check  # end of string
+                
+                # Check if character is newline (end of input)
+                li $t2, 10
+                beq $t1, $t2, end_add_time_check
+                
+                # Check if character is a digit (0-9)
+                li $t2, '0'
+                blt $t1, $t2, invalid_add_time_flag
+                li $t2, '9'
+                bgt $t1, $t2, invalid_add_time_flag
+                
+                addi $t0, $t0, 1       # move to next character
+                j check_add_time_digit
+                
+            invalid_add_time_flag:
+                li $t9, 0              # flag = 0 (invalid)
+                
+            end_add_time_check:
+                beqz $t9, invalid_add_time_digit  # if flag == 0, invalid
+                
+                # Convert ASCII digits to integer
+                la $t0, inputBuffer
+                li $t1, 0              # initialize result
+                
+            convert_add_time:
+                lb $t2, ($t0)         # load current character
+                beqz $t2, end_convert_add_time  # end of string
+                li $t3, 10
+                beq $t2, $t3, end_convert_add_time  # newline
+                
+                # Multiply current result by 10
+                li $t3, 10
+                mul $t1, $t1, $t3
+                
+                # Add current digit
+                sub $t2, $t2, '0'     # convert ASCII to integer
+                add $t1, $t1, $t2
+                
+                addi $t0, $t0, 1       # move to next character
+                j convert_add_time
+                
+            end_convert_add_time:
+                # Validate add time (0-10)
+                li $t0, 0
+                blt $t1, $t0, invalid_add_time
+                li $t0, 10
+                bgt $t1, $t0, invalid_add_time
+                
+                move $s5, $t1          # store add time in $s5
+                sw $s5, ADD_TIME
+                j add_time_done
+                
+            invalid_add_time:
+                la $a0, strInvalid
+                li $v0, 4
+                syscall
+                j add_time_loop
+                
+            invalid_add_time_digit:
+                la $a0, strInvalidDigit
+                li $v0, 4
+                syscall
+                j add_time_loop
+                
+        set_add_time_zero:
+            li $s5, 0
+            sw $s5, ADD_TIME
+            
+        add_time_done:
+            sw $s1, SIZE
+            sw $s2, NUM_TO_WIN
+            li $v0, 1
+            sw $v0, game_mode
+            j mode_done
+            
+        invalid_time:
+            la $a0, strInvalid
+            li $v0, 4
+            syscall
+            j time_loop
+            
+		invalid_time_digit:
+        	la $a0, strInvalidTime
+            li $v0, 4
+            syscall
+            j time_loop
+                    
+    mode_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: choose_opponent
+#
+# Description: Choose to play against human or computer
+# Modifies: game_opponent
+# Registers use: $t0-$t1, $a0-$a1, $v0
+# ------------------------------------------------------------------------------
+.macro choose_opponent
+    opponent_loop:
+        # Display opponent selection prompt
+        la $a0, strChooseOpp
+        li $v0, 4
+        syscall
+        
+        # Read input
+        la $a0, inputBuffer
+        li $a1, 3
+        li $v0, 8
+        syscall
+        
+        # Check input
+        lb $t0, inputBuffer
+        li $t1, 104      # 'h'
+        beq $t0, $t1, human_opponent
+        li $t1, 97       # 'a'
+        beq $t0, $t1, computer_opponent
+        
+        # Invalid input
+        la $a0, strInvalidHC
+        li $v0, 4
+        syscall
+        j opponent_loop
+        
+    human_opponent:
+        sw $zero, game_opponent
+        j opponent_done
+        
+    computer_opponent:
+        li $t0, 1
+        sw $t0, game_opponent
+        
+        # Ask which side human wants to play
+        side_loop:
+            la $a0, strChooseSide
+            li $v0, 4
+            syscall
+            
+            # Read input
+            la $a0, inputBuffer
+            li $a1, 3
+            li $v0, 8
+            syscall
+            
+            # Check input
+            lb $t0, inputBuffer
+            li $t1, 120      # 'x'
+            beq $t0, $t1, choose_player1
+            li $t1, 111      # 'o'
+            beq $t0, $t1, choose_player2
+            
+            # Invalid input
+            la $a0, strInvalidSide
+            li $v0, 4
+            syscall
+            j side_loop
+            
+        choose_player1:
+            li $t0, 1
+            sw $t0, human_side
+            la $a0, strPlayer1AI
+            sw $a0, current_message
+            j opponent_done
+            
+        choose_player2:
+            li $t0, 2
+            sw $t0, human_side
+            la $a0, strPlayer2AI
+            sw $a0, current_message
+            
+    opponent_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: ask_puzzle_type
+#
+# Description: Asks if player wants to play puzzle type (already had random moves on board) or blank type
+# Output: $v0 = 1 if yes, 0 if no
+# Registers use: $t0-$t1, $a0-$a1, $v0
+# ------------------------------------------------------------------------------
+.macro ask_puzzle_type
+    puzzle_loop:
+        # Display prompt
+        la $a0, strAskRandMoves
+        li $v0, 4
+        syscall
+        
+        # Read input
+        la $a0, inputBuffer
+        li $a1, 3
+        li $v0, 8
+        syscall
+        
+        # Check input
+        lb $t0, inputBuffer
+        li $t1, 98      # 'b'
+        beq $t0, $t1, puzzle_no
+        li $t1, 112     # 'p'
+        beq $t0, $t1, puzzle_yes
+        
+        # Invalid input
+        la $a0, strInvalidYN
+        li $v0, 4
+        syscall
+        j puzzle_loop
+        
+    puzzle_yes:
+        li $v0, 1
+        j puzzle_done
+        
+    puzzle_no:
+        li $v0, 0
+        
+    puzzle_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: generate_random_moves
+#
+# Description: Generates random moves on board (SIZE*SIZE/4 moves)
+# Registers use: $t0-$t8, $a0-$a1, $v0
+# ------------------------------------------------------------------------------
+.macro generate_random_moves
+    # Calculate number of random moves (SIZE*SIZE/16)
+    lw $t0, SIZE
+    mul $t1, $t0, $t0
+    srl $t1, $t1, 4         # Divide by 16
+    beq $t0, 1, set_done
+    
+    # Check even/odd and >= 2
+    blt $t1, 2, set_to_2
+    andi $t2, $t1, 1      
+    beqz $t2, set_done   
+    addi $t1, $t1, 1
+    j set_done
+    set_to_2:
+    li $t1, 2
+    set_done:
+    sw $t1, random_count
+    
+    # Display message
+    la $a0, strRandomMoves
+    li $v0, 4
+    syscall
+    
+    move $a0, $t1
+    li $v0, 1
+    syscall
+    
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    
+    li $t2, 0               # Move counter
+    
+    random_move_loop:
+        beq $t2, $t1, random_done
+        
+        # Generate random x and y
+        li $v0, 42
+        move $a0, $zero
+        lw $a1, SIZE
+        syscall                    # $a0 = random x (0..SIZE-1)
+        move $t3, $a0
+        
+        li $v0, 42
+        move $a0, $zero
+        lw $a1, SIZE
+        syscall                    # $a0 = random y (0..SIZE-1)
+        move $t4, $a0
+        
+        # Check if cell is empty
+        lw $t5, SIZE
+        mul $t6, $t3, $t5
+        add $t6, $t6, $t4
+        sll $t6, $t6, 2
+        lw $t5, board
+        add $t6, $t5, $t6
+        lw $t7, 0($t6)
+        bnez $t7, random_move_loop  # If occupied, try again
+        
+        # Alternate between player 1 and 2
+        andi $t8, $t2, 1           # Check if move count is odd/even
+        addi $t8, $t8, 1           # Player 1 or 2
+        
+        # Make the move
+        sw $t8, 0($t6)
+        addi $t2, $t2, 1
+        j random_move_loop
+        
+    random_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: choose_game_information
+#
+# Description: Choose mode, board type, opponent, side
+# Registers use: $v0
+# ------------------------------------------------------------------------------
+.macro choose_game_information
+	choose_mode
+    beq $v0, 0, skip_ask_puzzle
+    
+    # Ask if want play puzzle
+    ask_puzzle_type
+    sw $v0, puzzle_type
+    skip_ask_puzzle:
+    choose_opponent
+.end_macro 
+
+# ------------------------------------------------------------------------------
+# MACRO: create_initial_board
+#
+# Description: Copy the initial board state for save to file after (for distinguish puzzle type)
+# Registers use: $t0-$t6
+# ------------------------------------------------------------------------------
+.macro create_initial_board
+    # First copy the current board to init_board
+    li $t0, 0                   # Row counter
+    copy_board_loop:
+        li $t1, 0               # Column counter
+        copy_row_loop:
+            # Calculate position in board
+            lw $t2, SIZE
+            mul $t3, $t0, $t2
+            add $t3, $t3, $t1
+            sll $t3, $t3, 2     # Multiply by 4 (word size)
+            
+            # Load from board
+            lw $t4, board
+            add $t5, $t4, $t3
+            lw $t6, 0($t5)      # Value from board
+            
+            # Store to init_board
+            lw $t4, init_board
+            add $t5, $t4, $t3
+            sw $t6, 0($t5)      # Store to init_board
+            
+            # Next column
+            addi $t1, $t1, 1
+            lw $t2, SIZE
+            blt $t1, $t2, copy_row_loop
+            
+        # Next row
+        addi $t0, $t0, 1
+        lw $t2, SIZE
+        blt $t0, $t2, copy_board_loop
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: start_timer
+#
+# Description: Initialize player timers
+# Registers use: $s5, $a0, $v0
+# ------------------------------------------------------------------------------
+.macro start_timer
+    lw $s5, TIME_LIMIT          # Time limit
+    sw $s5, player1_time
+    sw $s5, player2_time
+    li $v0, 30
+    syscall
+    sw $a0, last_tick    # Store initial tick count
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: update_player_time
+#
+# Description: Update current player's remaining time
+# Registers use: $t0-$t2, $t9, $s0, $a0, $v0 
+# ------------------------------------------------------------------------------
+.macro update_player_time
+    # Skip time update if infinite time mode
+    lw $t9, TIME_LIMIT
+    bltz $t9, time_update_done
+    
+    # Get current time
+    li $v0, 30
+    syscall
+    
+    # Calculate elapsed time since last update (in seconds)
+    lw $t0, last_tick
+    sub $t1, $a0, $t0    # Elapsed milliseconds
+    div $t1, $t1, 1000   # Convert to seconds
+    mflo $t1
+    
+    # Update last tick
+    sw $a0, last_tick
+    
+    # Deduct from current player's time (before switching)
+    lw $s0, current_player  	
+    beq $s0, 1, update_p1_time
+
+    update_p2_time:
+    	lw $t2, player2_time
+    	sub $t2, $t2, $t1
+    	bgez $t2, update_p2_done
+    	li $t2, 0            # Don't go below 0
+    	update_p2_done:
+    	sw $t2, player2_time
+    	j time_update_done
+    
+    update_p1_time:
+       	lw $t0, player1_time
+       	sub $t0, $t0, $t1
+       	bgez $t0, update_p1_done
+       	li $t0, 0        # Don't go below 0
+       	update_p1_done:
+       	sw $t0, player1_time
+       	
+    time_update_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: update_ai_time
+#
+# Description: Update AI remaining time
+# Registers use: $t2, $t4
+# ------------------------------------------------------------------------------
+.macro update_ai_time
+	# Skip AI time deduction if infinite time mode
+	lw $t2, TIME_LIMIT
+	bltz $t2, ai_time_done   
+	                   
+    # AI takes 5s / move 
+    lw $t4, human_side
+    beq $t4, 2, update_time_ai_1
+    
+    update_time_ai_2:
+    	lw $t4, player2_time
+    	addi $t4, $t4, -5
+    	sw $t4, player2_time
+    	j ai_time_done
+    
+    update_time_ai_1:
+    	lw $t4, player1_time
+    	addi $t4, $t4, -5
+    	sw $t4, player1_time
+    	
+    ai_time_done:
+.end_macro 
+
+# ------------------------------------------------------------------------------
+# MACRO: add_time
+#
+# Description: Add player time per move
+# Registers use: $t2, $t4, $s5
+# ------------------------------------------------------------------------------
+.macro add_time
+    # Skip if undoing
+    lw $t0, undo_flag
+    bnez $t0, add_time_done
+    
+    # Skip if infinite time
+    lw $t2, TIME_LIMIT
+    bltz $t2, add_time_done
+    
+    lw $t2, current_player
+    beq $t2, 1, add_player1
+    
+    add_player2:
+        lw $t4, player2_time
+        lw $s5, ADD_TIME
+        add $t4, $t4, $s5
+        sw $t4, player2_time
+        j add_time_done
+        
+    add_player1:
+        lw $t4, player1_time
+        lw $s5, ADD_TIME
+        add $t4, $t4, $s5
+        sw $t4, player1_time
+        
+    add_time_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: determine_side_check
+#
+# Description: Determine if side is human or AI, becase they have different ways to update and check time
+# Registers use: $t3-$t4, $s0
+# ------------------------------------------------------------------------------
+.macro determine_side_check
+    # Determine side to check, because AI mode not use normal update_player_time
+    lw $t3, human_side
+	lw $t4, game_opponent
+	
+	beqz $t4, human_check
+	beq $t3, 1, swap_side_check
+	lw $s0, current_player
+	beq $s0, 1, ai_check
+	j swap_done
+	
+	swap_side_check:
+	lw $s0, current_player
+	beq $s0, 2, ai_check
+	swap_done:
+.end_macro 
+
+# ------------------------------------------------------------------------------
+# MACRO: check_timeout
+#
+# Description: Checks if current player has run out of time
+# Output: $v0 = 1 if timeout, 0 otherwise
+# Registers use: $t0, $t9, $s0, $v0
+# ------------------------------------------------------------------------------
+.macro check_timeout
+	# Skip timeout check if infinite time mode
+    lw $t9, TIME_LIMIT
+    bltz $t9, no_timeout
+    
+	lw $s0, current_player
+    beq $s0, 1, check_p1_time
+    # Check player 2's time
+    lw $t0, player2_time
+    j check_time_done
+    
+    check_p1_time:
+        lw $t0, player1_time
+    
+    check_time_done:
+    blez $t0, time_out
+    li $v0, 0
+    j timeout_check_done
+    
+    time_out:
+        li $v0, 1
+        j timeout_check_done
+        
+    no_timeout:
+    	li $v0, 0
+    
+    timeout_check_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: check_ai_timeout
+#
+# Description: Checks if AI has run out of time
+# Output: $v0 = 1 if timeout, 0 otherwise
+# Registers use: $t2, $t4, $v0
+# ------------------------------------------------------------------------------
+.macro check_ai_timeout
+	li $v0, 0
+    lw $t4, human_side
+    beq $t4, 1, ai_is_player2
+    
+    ai_is_player1:
+    	lw $t2, TIME_LIMIT
+    	bltz $t2, ai_check_time_done  # Skip timeout check if infinite
+    	lw $t4, player1_time
+    	bgez $t4, ai_check_time_done
+		li $v0, 1
+    	j ai_check_time_done
+    
+	ai_is_player2:
+    	lw $t2, TIME_LIMIT
+    	bltz $t2, ai_check_time_done  # Skip timeout check if infinite
+    	lw $t4, player2_time
+    	bgez $t4, ai_check_time_done
+		li $v0, 1
+    	j ai_check_time_done
+    	
+    ai_check_time_done:
+.end_macro 
+
+# ------------------------------------------------------------------------------
+# MACRO: set_time_to_zero
+#
+# Description: Reset time to zero when timeout in order to avoid less than 0
+# Registers use: $t9, $a0, $v0
+# ------------------------------------------------------------------------------
+.macro set_time_to_zero
+    lw $s0, current_player
+	beq $s0, 1, timeout_player1
+	
+	timeout_player2:
+	sw $zero, player2_time
+	j set_time_done
+	
+	timeout_player1:
+	sw $zero, player1_time
+	
+	set_time_done:
+.end_macro 
+
+# ------------------------------------------------------------------------------
+# MACRO: display_time_remaining
+#
+# Description: Display remaining time for both players
+# Registers use: $t9, $a0, $v0
+# ------------------------------------------------------------------------------
+.macro display_time_remaining
+	# Skip display if infinite time mode
+    lw $t9, TIME_LIMIT
+    bltz $t9, time_display_infi
+    
+    # Player 1's time
+    la $a0, strPlayer1Time
+    li $v0, 4
+    syscall
+    
+    lw $a0, player1_time
+    li $v0, 1
+    syscall
+    
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    
+    # Player 2's time
+    la $a0, strPlayer2Time
+    li $v0, 4
+    syscall
+    
+    lw $a0, player2_time
+    li $v0, 1
+    syscall
+    
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    syscall
+    
+    j display_time_done
+    
+    time_display_infi:
+    # Player 1's time
+    la $a0, strPlayer1Time
+    li $v0, 4
+    syscall
+    
+    la $a0, strInfi
+    li $v0, 4
+    syscall
+    
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    
+    # Player 2's time
+    la $a0, strPlayer2Time
+    li $v0, 4
+    syscall
+    
+    la $a0, strInfi
+    li $v0, 4
+    syscall
+    
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    syscall
+    display_time_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: display_move_count
+#
+# Description: Displays the current move count to console
+# Registers use: $s7, $a0, $v0
+# ------------------------------------------------------------------------------
+.macro display_move_count
+	la $a0, strNewLine
+    li $v0, 4
+    syscall
+    
+    la $a0, strCount
+    li $v0, 4
+    syscall
+    
+    lw $s7, move_count
+    move $a0, $s7          # Display move count
+    li $v0, 1
+    syscall
+    
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: ask_replay
+#
+# Description: Asks player if they want to play again or choose mode
+# Output: $v0 = 1 if yes, 0 if no, 2 if choose mode
+# Registers use: $t0-$t1, $a0-$a1, $v0
+# ------------------------------------------------------------------------------
+.macro ask_replay
+    replay_loop:
+        # Display prompt
+        la $a0, strPlayAgain
+        li $v0, 4
+        syscall
+        
+        # Read input
+        la $a0, inputBuffer
+        li $a1, 3
+        li $v0, 8
+        syscall
+        
+        # Check input
+        lb $t0, inputBuffer
+        li $t1, 114      # 'r'
+        beq $t0, $t1, replay_yes
+        li $t1, 101      # 'e'
+        beq $t0, $t1, replay_no
+        li $t1, 109      # 'm'
+        beq $t0, $t1, replay_mode
+        
+        # Invalid input
+        la $a0, strInvalidREM
+        li $v0, 4
+        syscall
+        j replay_loop
+        
+    replay_yes:
+        li $v0, 1
+        j replay_done
+        
+    replay_no:
+        li $v0, 0
+        j replay_done
+        
+    replay_mode:
+        li $v0, 2
+        
+    replay_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: reset_game
+#
+# Description: Resets the game state for a new game
+# Registers use: $t0-$t3, $s0, $s7, $a0, $v0
+# ------------------------------------------------------------------------------
+.macro reset_game
+    # Allocate memory for board (SIZE * SIZE * 4 bytes)
+    lw $t0, SIZE
+    mul $a0, $t0, $t0    # Calculate total cells
+    sll $a0, $a0, 2      # Multiply by 4 bytes per cell
+    li $v0, 9            # Syscall for memory allocation
+    syscall
+    
+    # Check if allocation succeeded
+    beqz $v0, alloc_failed
+    sw $v0, board     # Store pointer to allocated memory
+    
+    # Allocate memory for init_board (SIZE * SIZE * 4 bytes)
+    li $v0, 9            # Syscall for memory allocation
+    syscall
+    
+    beqz $v0, alloc_failed
+    sw $v0, init_board     # Store pointer to allocated memory
+    
+    # Initialize board to zeros
+    lw $t0, SIZE
+    mul $t1, $t0, $t0    # Total cells
+    sll $t1, $t1, 2      # Total bytes
+    lw $t2, board
+    li $t3, 0            # Counter
+    
+    board_loop:
+        sw $zero, 0($t2)
+        addi $t2, $t2, 4
+        addi $t3, $t3, 4
+        blt $t3, $t1, board_loop
+        
+    lw $t2, init_board
+    li $t3, 0            # Counter
+    
+    init_board_loop:
+        sw $zero, 0($t2)
+        addi $t2, $t2, 4
+        addi $t3, $t3, 4
+        blt $t3, $t1, init_board_loop
+    
+    j reset_continue
+    
+    alloc_failed:
+        la $a0, strAllocError
+        li $v0, 4
+        syscall
+        li $v0, 10
+        syscall
+    
+    reset_continue:
+    li $s0, 1          # Current player, starts at 1
+    sw $s0, current_player
+    li $s7, 0          # Move count, starts at 0
+    sw $s7, move_count
+    sw $zero, undo_flag
+    sw $zero, action_count
+    
+    # Reset winning coordinates
+    sw $zero, win_start_x
+    sw $zero, win_start_y
+    sw $zero, win_end_x
+    sw $zero, win_end_y
+    
+    # Reset timers
+    start_timer
+    
+    # Reset puzzle type
+    lw $t0, game_mode
+    bnez $t0, skip_reset_puzzle
+    sw $zero, puzzle_type
+    skip_reset_puzzle:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: print_mini_board
+#
+# Description: Prints a 15x15 mini board centered around the last move when SIZE > 20
+# Registers use: $t0-$t9, $s1, $a0, $v0
+# ------------------------------------------------------------------------------
+.macro print_mini_board
+    # Check if there's a last move to center around
+    lw $t0, last_move_x
+    lw $t1, last_move_y
+    bltz $t0, no_mini_board  # No last move
+    
+    # Calculate center coordinates (adjust if near edges)
+    lw $s1, SIZE
+    
+    # Calculate min/max rows (center around last move)
+    # Start row = max(0, last_move_x - 7)
+    li $t2, 7
+    sub $t3, $t0, $t2       # last_move_x - 7
+    bgez $t3, calc_row_start
+    li $t3, 0               # if negative, set to 0
+    
+	calc_row_start:
+    # End row = min(SIZE-1, last_move_x + 7)
+    add $t4, $t0, $t2       # last_move_x + 7
+    subi $t5, $s1, 1
+    ble $t4, $t5, calc_row_end
+    move $t4, $t5           # if exceeds, set to SIZE-1
+    
+	calc_row_end:
+    # Adjust if range is less than 15
+    sub $t5, $t4, $t3
+    li $t6, 14
+    blt $t5, $t6, adjust_row_range
+    j calc_col_start
+    
+	adjust_row_range:
+    # Try to expand range to get 15 rows
+    li $t5, 14
+    sub $t6, $t5, $t5       # 14 - current range
+    # Can we expand down?
+    add $t7, $t4, $t6
+    ble $t7, $s1, expand_down
+    # Can't expand down, try up
+    sub $t7, $t3, $t6
+    bgez $t7, expand_up
+    # Can't expand either way, use what we have
+    j calc_col_start
+    
+	expand_down:
+    add $t4, $t4, $t6
+    j calc_col_start
+    
+	expand_up:
+    sub $t3, $t3, $t6
+    
+	calc_col_start:
+    # Calculate min/max columns (center around last move)
+    # Start col = max(0, last_move_y - 7)
+    li $t2, 7
+    sub $t5, $t1, $t2       # last_move_y - 7
+    bgez $t5, calc_col_start_ok
+    li $t5, 0               # if negative, set to 0
+    
+	calc_col_start_ok:
+    # End col = min(SIZE-1, last_move_y + 7)
+    add $t6, $t1, $t2       # last_move_y + 7
+    subi $t7, $s1, 1
+    ble $t6, $t7, calc_col_end_ok
+    move $t6, $t7           # if exceeds, set to SIZE-1
+    
+	calc_col_end_ok:
+    # Adjust if range is less than 15
+    sub $t7, $t6, $t5
+    li $t8, 14
+    blt $t7, $t8, adjust_col_range
+    j print_mini_header
+    
+	adjust_col_range:
+    # Try to expand range to get 15 columns
+    li $t7, 14
+    sub $t8, $t7, $t7       # 14 - current range
+    # Can we expand right?
+    add $t9, $t6, $t8
+    ble $t9, $s1, expand_right
+    # Can't expand right, try left
+    sub $t9, $t5, $t8
+    bgez $t9, expand_left
+    # Can't expand either way, use what we have
+    j print_mini_header
+    
+	expand_right:
+    add $t6, $t6, $t8
+    j print_mini_header
+    
+	expand_left:
+    sub $t5, $t5, $t8
+    
+	print_mini_header:
+    # Print mini board title
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    
+    la $a0, strMiniBoard
+    li $v0, 4
+    syscall
+    
+    # Print column numbers header (8 spaces for alignment)
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    
+    # Print column numbers
+    move $t7, $t5       # current column = start_col
+    
+	print_mini_col_numbers:
+    move $a0, $t7
+    li $v0, 1
+    syscall
+    
+    # Print spaces (5 for 1-digit, 4 for 2-digit numbers)
+    blt $t7, 10, one_digit_mini
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    syscall
+    syscall
+    syscall
+    j next_mini_col
+    
+	one_digit_mini:
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    
+	next_mini_col:
+    addi $t7, $t7, 1
+    ble $t7, $t6, print_mini_col_numbers
+    
+    # New line after column numbers
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    
+    addi $t6, $t6, 1
+    
+    # Print top border (5 spaces + border)
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    
+    li $a0, '+'
+    li $v0, 11
+    syscall
+    
+    # Print horizontal line (5 hyphens per cell)
+    move $t7, $t5       # current column = start_col
+    
+	print_mini_top_line:
+    li $a0, '-'
+    li $v0, 11
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    
+    addi $t7, $t7, 1
+    beq $t7, $t6, end_mini_top_line
+    
+    # Print intersection
+    li $a0, '+'
+    li $v0, 11
+    syscall
+    j print_mini_top_line
+    
+	end_mini_top_line:
+    # Print top-right corner
+    li $a0, '+'
+    li $v0, 11
+    syscall
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    
+    # Print board rows
+    move $t7, $t3       # current row = start_row
+    
+	print_mini_rows_loop:
+    # Print row number with alignment (5 spaces + number)
+    blt $t7, 10, single_digit_mini_row
+    # Double digit row number
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    move $a0, $t7
+    li $v0, 1
+    syscall
+    
+    j print_mini_row_content
+    
+	single_digit_mini_row:
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    syscall
+    move $a0, $t7
+    li $v0, 1
+    syscall
+    
+	print_mini_row_content:
+    # Print left border (2 spaces + border)
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    syscall
+    
+    li $a0, '|'
+    li $v0, 11
+    syscall
+    
+    # Print cells (5 characters wide)
+    move $t8, $t5       # current column = start_col
+    
+	print_mini_cells:
+    # Calculate board position
+    lw $t2, SIZE
+    mul $t9, $t7, $t2
+    add $t9, $t9, $t8
+    sll $t9, $t9, 2
+    lw $t2, board
+    add $t9, $t2, $t9
+    lw $t2, 0($t9)      # cell value
+
+    # Print 1 space before symbol (centering in 5-char cell)
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    
+    # Print symbol with brackets (same as main board)
+    beqz $t2, print_mini_dot
+    li $t9, 1
+    beq $t2, $t9, print_mini_X
+    
+    # Print {O}
+    li $a0, '{'
+    li $v0, 11
+    syscall
+    li $a0, 'O'
+    li $v0, 11
+    syscall
+    li $a0, '}'
+    li $v0, 11
+    syscall
+    j print_mini_cell_end
+    
+	print_mini_X:
+    # Print }X{
+    li $a0, '}'
+    li $v0, 11
+    syscall
+    li $a0, 'X'
+    li $v0, 11
+    syscall
+    li $a0, '{'
+    li $v0, 11
+    syscall
+    j print_mini_cell_end
+    
+	print_mini_dot:
+    # Print single dot centered
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    li $a0, '.'
+    li $v0, 11
+    syscall
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    
+	print_mini_cell_end:
+    # Print 1 space after symbol (centering in 5-char cell)
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    
+    # Print right border
+    li $a0, '|'
+    li $v0, 11
+    syscall
+
+    addi $t8, $t8, 1
+    blt $t8, $t6, print_mini_cells
+
+    # New line
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    
+    # Print divider between rows (except last row)
+    beq $t7, $t4, skip_mini_divider
+    
+    # Print spaces for row numbers (5 spaces)
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    
+    # Print left divider
+    li $a0, '+'
+    li $v0, 11
+    syscall
+    
+    # Print horizontal divider (5 hyphens per cell)
+    move $t8, $t5       # current column = start_col
+    
+	print_mini_divider:
+    li $a0, '-'
+    li $v0, 11
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    
+    addi $t8, $t8, 1
+    beq $t8, $t6, end_mini_divider
+    
+    li $a0, '+'
+    li $v0, 11
+    syscall
+    j print_mini_divider
+    
+	end_mini_divider:
+    li $a0, '+'
+    li $v0, 11
+    syscall
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    
+	skip_mini_divider:
+    addi $t7, $t7, 1
+    ble $t7, $t4, print_mini_rows_loop
+    
+    # Print bottom border (5 spaces + border)
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    
+    li $a0, '+'
+    li $v0, 11
+    syscall
+    
+    # Print bottom line (5 hyphens per cell)
+    move $t7, $t5       # current column = start_col
+    
+	print_mini_bottom_line:
+    li $a0, '-'
+    li $v0, 11
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    
+    addi $t7, $t7, 1
+    beq $t7, $t6, end_mini_bottom_line
+    
+    li $a0, '+'
+    li $v0, 11
+    syscall
+    j print_mini_bottom_line
+    
+	end_mini_bottom_line:
+    # Print bottom-right corner
+    li $a0, '+'
+    li $v0, 11
+    syscall
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    
+    j mini_board_done
+    
+	no_mini_board:
+    # Print no move message
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    
+    la $a0, strNoLastMove
+    li $v0, 4
+    syscall
+    
+	mini_board_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: print_board
+#
+# Description: Prints the current state of the size x size game board with coordinates
+# Registers use: $t0-$t7, $s1, $a0, $a3, $v0
+# ------------------------------------------------------------------------------
+.macro print_board
+    # ---- 1. Print column numbers header    
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    
+    # Print spaces for row numbers alignment (8 spaces)
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    
+    # Print column numbers
+    li $t0, 0       # Column counter
+	print_header:
+        move $a0, $t0
+        li $v0, 1    # Print number
+        syscall
+        
+        # Calculate spaces needed (5 for 1-digit, 4 for 2-digit numbers)
+        blt $t0, 10, one_digit_header
+        # Two-digit number
+        li $a3, 4    # 4 spaces
+        j print_header_spaces
+        
+        one_digit_header:
+            li $a3, 5    # 5 spaces
+            
+        print_header_spaces:
+            li $a0, ' '
+            li $v0, 11
+            print_space_loop:
+                syscall
+                addi $a3, $a3, -1
+                bgtz $a3, print_space_loop
+        
+        addi $t0, $t0, 1
+        lw $s1, SIZE
+        blt $t0, $s1, print_header
+    
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+    
+    # ---- 2. Print top border
+    # Print spaces for row numbers
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    
+    # Print top-left corner
+    li $a0, '+'
+    li $v0, 11
+    syscall
+    
+    # Print horizontal line (5 characters per cell)
+    li $t0, 0
+    lw $s1, SIZE
+    print_top_line:
+        li $t1, 0
+        print_horizontal:
+            li $a0, '-'
+            li $v0, 11
+            syscall
+            addi $t1, $t1, 1
+            li $t2, 5       # 5 hyphens per cell
+            blt $t1, $t2, print_horizontal
+        
+        addi $t0, $t0, 1
+        beq $t0, $s1, end_top_line
+        
+        # Print intersection
+        li $a0, '+'
+        li $v0, 11
+        syscall
+        j print_top_line
+        
+    end_top_line:
+        # Print top-right corner
+        li $a0, '+'
+        li $v0, 11
+        syscall
+        la $a0, strNewLine
+        li $v0, 4
+        syscall
+    
+    # ---- 3. Print board rows
+    li $t0, 0       # Row counter
+    
+    print_rows_loop:
+        # Print row number with alignment
+        blt $t0, 10, single_digit_row
+        # Double digit row number
+        li $a0, ' '
+        li $v0, 11
+        syscall
+        move $a0, $t0
+        li $v0, 1
+        syscall
+        
+        j print_row_content
+        
+        single_digit_row:
+            li $a0, ' '
+            li $v0, 11
+            syscall
+            syscall
+            move $a0, $t0
+            li $v0, 1
+            syscall
+            
+        print_row_content:
+            # Print left border
+            li $a0, ' '
+            li $v0, 11
+            syscall
+            syscall
+            
+            li $a0, '|'
+            li $v0, 11
+            syscall
+            
+            # Print cells (5 characters wide)
+            li $t1, 0       # Column counter
+            print_cells:
+                # Calculate board position
+                lw $t2, SIZE
+                mul $t3, $t0, $t2
+                add $t3, $t3, $t1
+                sll $t3, $t3, 2
+                lw $t4, board
+                add $t5, $t4, $t3
+                lw $t6, 0($t5)
+
+                # Print 1 space before symbol (centering in 5-char cell)
+                li $a0, ' '
+                li $v0, 11
+                syscall
+                
+                # Print symbol with brackets
+                beqz $t6, print_dot
+                li $t7, 1
+                beq $t6, $t7, print_X
+                
+                # Print {O}
+                li $a0, '{'
+                li $v0, 11
+                syscall
+                li $a0, 'O'
+                li $v0, 11
+                syscall
+                li $a0, '}'
+                li $v0, 11
+                syscall
+                j print_cell_end
+                
+                print_X:
+                    # Print }X{
+                    li $a0, '}'
+                    li $v0, 11
+                    syscall
+                    li $a0, 'X'
+                    li $v0, 11
+                    syscall
+                    li $a0, '{'
+                    li $v0, 11
+                    syscall
+                    j print_cell_end
+                    
+                print_dot:
+                    # Print single dot centered
+                    li $a0, ' '
+                    li $v0, 11
+                    syscall
+                    li $a0, '.'
+                    li $v0, 11
+                    syscall
+                    li $a0, ' '
+                    li $v0, 11
+                    syscall
+                    
+                print_cell_end:
+                    # Print 1 space after symbol (centering in 5-char cell)
+                    li $a0, ' '
+                    li $v0, 11
+                    syscall
+                    
+                    # Print right border
+                    li $a0, '|'
+                    li $v0, 11
+                    syscall
+
+                addi $t1, $t1, 1
+                lw $s1, SIZE
+                blt $t1, $s1, print_cells
+
+            # New line
+            la $a0, strNewLine
+            li $v0, 4
+            syscall
+            
+            # Print divider between rows (except last row)
+            lw $s1, SIZE
+            subi $s1, $s1, 1
+            beq $t0, $s1, skip_divider
+            
+            # Print spaces for row numbers (5 spaces)
+            li $a0, ' '
+            li $v0, 11
+            syscall
+            syscall
+            syscall
+            syscall
+            syscall
+            
+            # Print left divider
+            li $a0, '+'
+            li $v0, 11
+            syscall
+            
+            # Print horizontal divider (5 hyphens per cell)
+            li $t1, 0
+            print_divider:
+                li $t2, 0
+                print_divider_line:
+                    li $a0, '-'
+                    li $v0, 11
+                    syscall
+                    addi $t2, $t2, 1
+                    li $t3, 5
+                    blt $t2, $t3, print_divider_line
+                
+                addi $t1, $t1, 1
+                lw $s1, SIZE
+                beq $t1, $s1, end_divider
+                
+                li $a0, '+'
+                li $v0, 11
+                syscall
+                j print_divider
+                
+            end_divider:
+                li $a0, '+'
+                li $v0, 11
+                syscall
+                la $a0, strNewLine
+                li $v0, 4
+                syscall
+            
+            skip_divider:
+                addi $t0, $t0, 1
+                lw $s1, SIZE
+                blt $t0, $s1, print_rows_loop
+    
+    # ---- 4. Print bottom border
+    # Print spaces for row numbers (5 spaces)
+    li $a0, ' '
+    li $v0, 11
+    syscall
+    syscall
+    syscall
+    syscall
+    syscall
+    
+    # Print bottom-left corner
+    li $a0, '+'
+    li $v0, 11
+    syscall
+    
+    # Print bottom line (5 hyphens per cell)
+    li $t0, 0
+    lw $s1, SIZE
+    print_bottom_line:
+        li $t1, 0
+        print_bottom_horizontal:
+            li $a0, '-'
+            li $v0, 11
+            syscall
+            addi $t1, $t1, 1
+            li $t2, 5
+            blt $t1, $t2, print_bottom_horizontal
+        
+        addi $t0, $t0, 1
+        beq $t0, $s1, end_bottom_line
+        
+        li $a0, '+'
+        li $v0, 11
+        syscall
+        j print_bottom_line
+        
+    end_bottom_line:
+        # Print bottom-right corner
+        li $a0, '+'
+        li $v0, 11
+        syscall
+        la $a0, strNewLine
+        li $v0, 4
+        syscall
+    
+    # ---- 5. Print mini board if there are moves and SIZE > 20
+    lw $t0, move_count
+    beqz $t0, no_mini_board_needed
+    lw $t0, SIZE
+    ble $t0, 20, no_mini_board_needed 
+    print_mini_board
+    no_mini_board_needed:
+
+    # ---- 6. Print move count and time
+    display_move_count
+    display_time_remaining
+    
+    # ---- 7. Check and display any pending message
+    lw $t0, current_message
+    beqz $t0, no_message
+    
+    # Display the message
+    move $a0, $t0
+    li $v0, 4
+    syscall
+    
+    # Clear message
+    sw $zero, current_message
+    
+    no_message:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: get_player_input
+#
+# Description: Gets and validates player input, 'u' (undo) and 's' (surrender)
+# Output: $v0 = x coordinate, $v1 = y coordinate, or $v0 = -1 (undo), $v0 = -2 (surrender)
+# Registers use: $t0-$t9, $s1, $s7, $a0, $v0-$v1
+# ------------------------------------------------------------------------------
+.macro get_player_input
+    # Check timeout before parse coordinates
+    update_player_time
+    check_timeout
+    bnez $v0, input_timeout  # If timeout, end immediately
+        
+    input_loop:
+        # Show appropriate prompt
+        li $t8, 1
+        lw $s0, current_player
+        beq $s0, $t8, prompt_p1
+        la $a0, strPrompt2
+        j prompt_done
+        prompt_p1:
+            la $a0, strPrompt1
+        prompt_done:
+            li $v0, 4
+            syscall
+            
+        # Display special notification
+        la $a0, strSpecialU
+        li $v0, 4
+        syscall
+        
+        lw $t0, current_player
+        and $t0, $t0, 1
+        addi $t0, $t0, 1
+        move $a0, $t0
+        li $v0, 1
+        syscall
+        
+        la $a0, strSpecialS
+        li $v0, 4
+        syscall
+        
+        # Read input
+        la $a0, inputBuffer
+        li $a1, 10
+        li $v0, 8
+        syscall
+
+        # Parse input
+        la $t0, inputBuffer
+        lb $t4, 0($t0)
+        
+        # Check for special commands first
+        li $t1, 117      # 'u'
+        beq $t4, $t1, undo_command
+        li $t1, 115      # 's'
+        beq $t4, $t1, surrender_command
+        
+        # If no special command, do standardly
+        li $t1, 0          # x
+        li $t2, 0          # y
+        li $t3, 0          # parsing flag (0 for x, 1 for y)
+        li $t7, 0          # x digit flag
+        li $t9, 0          # comma found flag
+
+        parse_loop:
+            lb $t4, 0($t0)
+            beq $t4, 10, parse_done_check  # newline
+            beq $t4, 44, switch_to_y  # comma
+
+            # Validate digit
+            li $t5, 48
+            li $t6, 57
+            blt $t4, $t5, invalid_format
+            bgt $t4, $t6, invalid_format
+
+            sub $t4, $t4, 48
+
+            beq $t3, 0, store_x
+            mul $t2, $t2, 10
+            add $t2, $t2, $t4
+            j continue_parse
+
+            store_x:
+                mul $t1, $t1, 10
+                add $t1, $t1, $t4
+                li $t7, 1   # mark that we have a digit for x
+
+            continue_parse:
+                addi $t0, $t0, 1
+                j parse_loop
+
+            switch_to_y:
+                # Check if we already found a comma
+                bnez $t9, invalid_format
+                # Input miss x
+                beq $t7, $zero, invalid_format_no_x
+                li $t3, 1
+                li $t9, 1   # mark that we found a comma
+                addi $t0, $t0, 1
+                lb $t4, 0($t0)
+                # Input miss y
+                beq $t4, 10, invalid_format_no_y
+                j parse_loop
+
+        parse_done_check:
+            # Check if we found a comma
+            beqz $t9, invalid_format
+            # Check if we have y value
+            beqz $t3, invalid_format_no_y
+            j parse_done
+
+        parse_done:
+            move $v0, $t1   # x
+            move $v1, $t2   # y
+
+            # Validate range
+            blt $v0, 0, invalid_input
+            lw $s1, SIZE
+            addi $s1, $s1, -1
+            bgt $v0, $s1, invalid_input
+            blt $v1, 0, invalid_input
+            lw $s1, SIZE
+            addi $s1, $s1, -1
+            bgt $v1, $s1, invalid_input
+
+            # Check if cell is occupied
+            lw $t2, SIZE
+            mul $t3, $v0, $t2
+            add $t3, $t3, $v1
+            sll $t3, $t3, 2
+            lw $t4, board
+            add $t5, $t4, $t3
+            lw $t6, 0($t5)
+            bnez $t6, occupied_cell
+            j input_done
+            
+        invalid_format:
+       		update_player_time        
+            print_board
+            la $a0, strInvalidCmd
+            li $v0, 4
+            syscall            
+            j input_loop
+
+        invalid_input:
+       		update_player_time        
+            print_board
+            la $a0, strInvalid
+            li $v0, 4
+            syscall
+            j input_loop
+
+        invalid_format_no_x:
+			update_player_time
+            print_board
+            la $a0, strInvalidCmd
+            li $v0, 4
+            syscall            
+            j input_loop
+
+        invalid_format_no_y:
+			update_player_time        
+            print_board
+            la $a0, strInvalidCmd
+            li $v0, 4
+            syscall            
+            j input_loop
+            
+        occupied_cell:
+        	update_player_time
+            print_board
+            la $a0, strOcc
+            li $v0, 4
+            syscall
+            j input_loop
+            
+        undo_command:
+    		# Check can undo
+        	lw $s7, move_count
+        	beqz $s7, no_move_to_undo
+        
+        	# Check if in AI mode and last move was by AI
+        	lw $t0, game_opponent
+        	beqz $t0, human_mode_undo  # If human vs human, allow undo
+        
+        	# In AI mode, check if last move was by AI
+        	lw $t0, ai_last_move
+        	beqz $t0, no_undo_after_ai  # If 0, last move was by AI
+        
+        	human_mode_undo:
+            	# Return can undo
+            	li $v0, -1
+            	li $v1, -1
+            	j input_done
+            
+        	no_undo_after_ai:
+        	    update_player_time
+            	print_board
+            	la $a0, strNoUndoAfterAI
+            	li $v0, 4
+            	syscall
+            	j input_loop
+                
+        	no_move_to_undo:
+        		update_player_time
+            	print_board
+            	la $a0, strNoMoveUndo
+            	li $v0, 4
+            	syscall
+            	j input_loop
+                
+        surrender_command:
+            # Return surrender
+            li $v0, -2
+            li $v1, -2
+            j input_done
+            
+        input_timeout:
+            # Return special value to indicate timeout
+            li $v0, -3
+            li $v1, -3
+
+    input_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: make_move ($x, $y, $player)
+#
+# Description: Places a move on the board if valid and store the last move
+# Input: $x, $y coordinates, $player (1 or 2)
+# Output: $v0 = 1 if position occupied, 0 if successful
+# Registers use: $t2-$t6, $v0, $x, $y, $player
+# ------------------------------------------------------------------------------
+.macro make_move ($x, $y, $player)
+    # Store last move
+    sw $x, last_move_x
+    sw $y, last_move_y
+    sw $player, last_player
+    
+    # Calculate board position using dynamic pointer
+    lw $t2, SIZE
+    mul $t3, $x, $t2
+    add $t3, $t3, $y
+    sll $t3, $t3, 2
+    lw $t4, board     # Load board pointer
+    add $t5, $t4, $t3
+    
+    # Check if occupied
+    lw $t6, 0($t5)
+    bne $t6, $zero, occupied
+    
+    # Make move
+    sw $player, 0($t5)
+    li $v0, 0
+    j move_done
+    
+    occupied:
+        la $t0, strOcc
+        sw $t0, current_message
+        li $v0, 1
+                
+    move_done:
+    add_time
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: print_ai_move
+#
+# Description: Display AI move
+# Registers use: $t2-$t6, $s0, $a0, $v0
+# ------------------------------------------------------------------------------
+.macro print_ai_move
+	lw $t2, game_opponent
+    beqz $t2, ai_move_message_done
+    lw $t3, human_side
+    lw $s0, current_player
+    bne $t3, $s0, ai_move_message_done
+    lw $t4, move_count
+    blez $t4, ai_move_message_done
+    
+    lw $t5, ai_move_x
+    lw $t6, ai_move_y
+    
+    la $a0, strAIPlay
+    li $v0, 4
+    syscall
+    la $a0, strParamsStart
+    li $v0, 4
+    syscall
+    move $a0, $t5
+    li $v0, 1
+    syscall
+    la $a0, strComma
+    li $v0, 4
+    syscall
+    move $a0, $t6
+    li $v0, 1
+    syscall
+    la $a0, strParamsEnd
+    li $v0, 4
+    syscall
+    li $a0, 10
+    li $v0, 11
+    syscall
+    
+    ai_move_message_done:
+.end_macro 
+
+# ------------------------------------------------------------------------------
+# MACRO: ask_undo_before_ai_move
+#
+# Description: Ask player if want to undo before AI turn
+# Registers use: $t0-$t3, $a0, $v0
+# ------------------------------------------------------------------------------
+.macro ask_undo_before_ai_move
+	ask_undo:
+        # Show prompt
+        la $a0, strAskUndo
+        li $v0, 4
+        syscall
+        
+        # Read input
+        la $a0, inputBuffer
+        li $a1, 3
+        li $v0, 8
+        syscall
+        
+        # Check input
+        lb $t0, inputBuffer
+        li $t1, 121      # 'y'
+        beq $t0, $t1, undo_ai
+        li $t1, 110      # 'n'
+        beq $t0, $t1, no_undo_ai
+        
+        la $a0, strInvalidYN
+        li $v0, 4
+        syscall
+        j ask_undo
+        
+	undo_ai:
+		li $v0, 0
+		j ask_undo_done
+	
+	no_undo_ai:
+		li $v0, 1
+		
+	ask_undo_done:
+.end_macro 
+
+# ------------------------------------------------------------------------------
+# MACRO: undo_last_move
+#
+# Description: Undo the last move made and switch to the previous player
+# Registers use: $t0-$t7, $s0, $s7, $a0, $v0
+# ------------------------------------------------------------------------------
+.macro undo_last_move
+    # Read last move
+    lw $t0, last_move_x
+    lw $t1, last_move_y
+    
+    # Check if already undid recently
+    lw $t2, undo_flag
+    bnez $t2, undo_too_much
+    
+    # Check can undo
+    bltz $t0, undo_done
+    
+    # Calculate board position
+    lw $t2, SIZE
+    mul $t3, $t0, $t2
+    add $t3, $t3, $t1
+    sll $t3, $t3, 2
+    lw $t4, board
+    add $t5, $t4, $t3
+    
+    # Delete move (reset to 0)
+    sw $zero, 0($t5)
+    
+    # Decrease count
+    lw $s7, move_count
+    subi $s7, $s7, 1
+    sw $s7, move_count
+    
+    # Switch to the previous player
+    lw $s0, last_player
+    sw $s0, current_player
+    
+    # Reset last move
+    li $t0, -1
+    sw $t0, last_move_x
+    sw $t0, last_move_y
+    sw $zero, last_player
+    
+    # Set undo flag
+    li $t0, 1
+    sw $t0, undo_flag
+    
+    # Update time and check timeout
+    update_player_time
+    check_timeout
+    bnez $v0, undo_timeout
+    
+    # Print board with undo message
+    la $t0, strUndo
+    sw $t0, current_message
+    
+    j undo_done
+    
+    undo_too_much:
+        # Update time and check timeout
+        update_player_time
+        check_timeout
+        bnez $v0, undo_timeout
+        
+        # Print board with warning message
+        la $t0, strUndoOne
+        sw $t0, current_message
+        j undo_done
+        
+    undo_timeout:
+        # Timeout occurred during undo - current player loses
+        la $a0, strTimeout
+        li $v0, 4
+        syscall
+        # Switch to other player who wins by timeout
+        switch_player
+        j timeout_game
+    
+    undo_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: check_dir ($x, $y, $player, $dx, $dy)
+#
+# Description: Checks if there are NUM_TO_WIN consecutive stones in a given direction
+#              and stores the winning line coordinates if found
+# Input: $x, $y of last move, $player (1 or 2), $dx (x direction), $dy (y direction)
+# Output: $v0 = 1 if NUM_TO_WIN consecutive stones found, 0 otherwise
+# Registers use: $t0-$t9, $s1-$s2, $s5, $v0, $x, $y, $player, $dx, $dy
+# ------------------------------------------------------------------------------
+.macro check_dir ($x, $y, $player, $dx, $dy)
+    li $t0, 1  # count starts at 1 (current move)
+    li $t1, 1   # step counter
+    move $t9, $x  # initialize start and end points
+    move $t8, $y
+
+    # Check forward direction
+    forward_loop:
+    	lw $s2, NUM_TO_WIN
+        beq $t1, $s2, backward_prep  # we only need to check up to NUM_TO_WIN - 1 steps forward
+        # Calculate next position
+        mul $t2, $t1, $dx
+        add $t3, $x, $t2    # new x
+        mul $t4, $t1, $dy
+        add $t5, $y, $t4    # new y
+        
+        # Check bounds - only skip if out of bounds
+        blt $t3, 0, backward_prep
+        lw $s1, SIZE
+        bge $t3, $s1, backward_prep
+        blt $t5, 0, backward_prep
+        lw $s1, SIZE
+        bge $t5, $s1, backward_prep
+        
+        # Check if cell belongs to player
+        lw $t6, SIZE
+        mul $t7, $t3, $t6
+        add $t7, $t7, $t5
+        sll $t7, $t7, 2
+        lw $t8, board
+        add $t9, $t8, $t7
+        lw $s5, 0($t9)
+        bne $s5, $player, backward_prep  # stop if not player's stone
+        
+        addi $t0, $t0, 1
+        addi $t1, $t1, 1
+        j forward_loop
+    
+    backward_prep:
+        # Store winning line end point
+        subi $t1, $t1, 1
+        mul $t2, $t1, $dx
+        add $t3, $x, $t2
+        mul $t4, $t1, $dy
+        add $t5, $y, $t4
+        
+        sw $t3, win_end_x
+        sw $t5, win_end_y
+        
+        li $t1, 1
+    
+    # Check backward direction
+    backward_loop:
+    	lw $s2, NUM_TO_WIN
+        beq $t1, $s2, finish_check  # we only need to check up to NUM_TO_WIN - 1 steps backward
+        # Calculate next position
+        mul $t2, $t1, $dx
+        sub $t3, $x, $t2    # new x
+        mul $t4, $t1, $dy
+        sub $t5, $y, $t4    # new y
+        
+        # Check bounds - only skip if out of bounds
+        blt $t3, 0, finish_check
+        lw $s1, SIZE
+        bge $t3, $s1, finish_check
+        blt $t5, 0, finish_check
+        lw $s1, SIZE
+        bge $t5, $s1, finish_check
+        
+        # Check if cell belongs to player
+        lw $t6, SIZE
+        mul $t7, $t3, $t6
+        add $t7, $t7, $t5
+        sll $t7, $t7, 2
+        lw $t8, board
+        add $t9, $t8, $t7
+        lw $s5, 0($t9)
+        bne $s5, $player, finish_check  # stop if not player's stone
+        
+        addi $t0, $t0, 1
+        addi $t1, $t1, 1
+        j backward_loop
+    
+    finish_check:
+        # Store winning line start point
+        subi $t1, $t1, 1
+        mul $t2, $t1, $dx
+        sub $t3, $x, $t2
+        mul $t4, $t1, $dy
+        sub $t5, $y, $t4
+        
+        sw $t3, win_start_x
+        sw $t5, win_start_y
+        
+        lw $t6, NUM_TO_WIN
+        bge $t0, $t6, dir_win
+        li $v0, 0
+        j end_dir_check
+        
+    dir_win:
+        li $v0, 1
+
+    end_dir_check:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: check_win ($x, $y, $player)
+#
+# Description: Checks if the move resulted in a win by checking all 4 directions
+#              and stores the winning line coordinates if found
+# Input: $x, $y of last move, $player (1 or 2)
+# Output: $v0 = 1 if win, 0 otherwise
+# Registers use: $s3, $s4, $a0-$a2, $v0, $x, $y, $player
+# ------------------------------------------------------------------------------
+.macro check_win ($x, $y, $player)
+    move $a0, $x
+    move $a1, $y
+    move $a2, $player
+    
+    # Check horizontal
+    li $s3, 1
+    li $s4, 0
+    check_dir($a0, $a1, $a2, $s3, $s4)
+    bne $v0, $zero, win_found
+    
+    # Check vertical
+    li $s3, 0
+    li $s4, 1
+    check_dir($a0, $a1, $a2, $s3, $s4)
+    bne $v0, $zero, win_found
+    
+    # Check diagonal \
+    li $s3, 1
+    li $s4, 1
+    check_dir($a0, $a1, $a2, $s3, $s4)
+    bne $v0, $zero, win_found
+    
+    # Check diagonal /
+    li $s3, 1
+    li $s4, -1
+    check_dir($a0, $a1, $a2, $s3, $s4)
+    bne $v0, $zero, win_found
+    
+    li $v0, 0
+    j win_check_done
+    
+    win_found:
+        li $v0, 1
+        
+    win_check_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: check_tie
+#
+# Description: Checks if the board is full (tie)
+# Output: $v0 = 1 if tie, 0 otherwise
+# Registers use: $t0-$t6, $s1, $v0
+# ------------------------------------------------------------------------------
+.macro check_tie
+    li $t0, 0  # row
+    
+    tie_outer:
+        li $t1, 0  # column
+        
+        tie_inner:
+        	# Calculate board position
+            lw $t2, SIZE
+            mul $t3, $t0, $t2
+            add $t3, $t3, $t1
+            sll $t3, $t3, 2
+            
+            # Load board cell value
+            lw $t4, board
+            add $t5, $t4, $t3
+            lw $t6, 0($t5)
+            
+            beq $t6, $zero, not_tie	# If 0, not tie
+            
+            addi $t1, $t1, 1
+            lw $s1, SIZE
+            blt $t1, $s1, tie_inner
+            
+        addi $t0, $t0, 1
+        lw $s1, SIZE
+        blt $t0, $s1, tie_outer
+        
+    li $v0, 1
+    j tie_done	# No cell left, tie game
+    
+    not_tie:
+        li $v0, 0
+        
+    tie_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: switch_player
+#
+# Description: Switches to the other player
+# Modifies: $s0 (current player)
+# Registers use: $t7, $s0
+# ------------------------------------------------------------------------------
+.macro switch_player    
+    li $t7, 3
+    lw $s0, current_player
+    sub $s0, $t7, $s0
+    sw $s0, current_player
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: update_score ($tie)
+#
+# Description: Update current score after per match
+# Input: $tie (1: Tie, 0: No tie)
+# Registers use: $t2, $s0, $tie
+# ------------------------------------------------------------------------------
+.macro update_score($tie)
+	bnez $tie, update_tie
+	
+	no_tie:
+	lw $s0, current_player
+	beq $s0, 1, player1_wins
+	
+	# Player 2 wins
+	player2_wins:
+	lw $t2, player2_score
+	addi $t2, $t2, 1
+	sw $t2, player2_score
+	j score_updated
+	
+	# Player 1 wins
+	player1_wins:
+	lw $t2, player1_score
+	addi $t2, $t2, 1
+	sw $t2, player1_score
+	j score_updated
+	
+	# Tie
+	update_tie:
+	lw $t2, ties
+	addi $t2, $t2, 1
+	sw $t2, ties	
+	
+	score_updated:	
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: display_win_message ($player)
+#
+# Description: Shows win message
+# Input: $player - winning player (1 or 2)
+# Registers use: $s7, $a0, $v0, $player
+# ------------------------------------------------------------------------------
+.macro display_win_message ($player)
+    la $a0, strPlayer
+    li $v0, 4
+    syscall
+    move $a0, $player
+    li $v0, 1
+    syscall
+    la $a0, strWins
+    li $v0, 4
+    syscall
+    lw $a0, move_count          # Display move count
+    li $v0, 1
+    syscall
+    la $a0, strMoves
+    li $v0, 4
+    syscall
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: display_win_line
+#
+# Description: Displays the winning line coordinates to console and file
+# Registers use: $a0, $v0
+# ------------------------------------------------------------------------------
+.macro display_win_line
+    # Display to console
+    li $a0, 32
+    li $v0, 11
+	syscall
+	
+    la $a0, strWinLine
+    li $v0, 4
+    syscall
+    
+    lw $a0, win_start_x 	# x1
+    li $v0, 1
+    syscall
+    
+    la $a0, strComma
+    li $v0, 4
+    syscall
+    
+    lw $a0, win_start_y		# y1
+    li $v0, 1
+    syscall
+    
+    la $a0, strTo
+    li $v0, 4
+    syscall
+    
+    lw $a0, win_end_x		# x2
+    li $v0, 1
+    syscall
+    
+    la $a0, strComma
+    li $v0, 4
+    syscall
+    
+    lw $a0, win_end_y		# y2
+    li $v0, 1
+    syscall
+    
+    la $a0, strCloseParen
+    li $v0, 4
+    syscall
+    
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: display_tie_message
+#
+# Description: Shows tie message
+# Registers use: $a0, $v0
+# ------------------------------------------------------------------------------
+.macro display_tie_message
+    la $a0, strTie
+    li $v0, 4
+    syscall
+    
+    lw $a0, move_count
+    li $v0, 1
+    syscall
+    
+    la $a0, strMoves
+    li $v0, 4
+    syscall
+    
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: display_score
+#
+# Description: Display current score
+# Registers use: $a0, $v0
+# ------------------------------------------------------------------------------
+.macro display_score
+    la $a0, strScoreTitle
+    li $v0, 4
+    syscall
+    
+    # Player 1 score
+    la $a0, strPlayer1Csl
+    li $v0, 4
+    syscall
+    
+    lw $a0, player1_score
+    li $v0, 1
+    syscall
+    
+    # Player 2 score
+    la $a0, strPlayer2Csl
+    li $v0, 4
+    syscall
+    
+    lw $a0, player2_score
+    li $v0, 1
+    syscall
+    
+    # Ties
+    la $a0, strTiesCsl
+    li $v0, 4
+    syscall
+    
+    lw $a0, ties
+    li $v0, 1
+    syscall
+    
+    la $a0, strDot
+    li $v0, 4
+    syscall
+    
+    la $a0, strNewLine
+    li $v0, 4
+    syscall
+.end_macro

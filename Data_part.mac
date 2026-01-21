@@ -1,0 +1,286 @@
+# ------------------- DATA PART ----------------- #
+
+.data
+# Board
+SIZE:         	 .word 15      # Board size (15x15)
+NUM_TO_WIN:      .word 5       # Number in a row needed to win
+TIME_LIMIT:		 .word 600	   # Limit time a player can play
+ADD_TIME: 		 .word 0	   # Time added per move
+board:           .word 0	   # Dynamic allocated board (size x size x4)
+init_board:	     .word 0	   # Dynamic allocated initial board (for distinguish puzzle type)
+
+# Player
+current_player:	 .word 1	   # 1 = player 1, 2 = player 2
+move_count:		 .word 0	   # Move count both 2 player
+move_x:			 .word -1
+move_y:			 .word -1
+
+# For input
+inputBuffer:     .space 10	   # Buffer for input
+
+# For messages show after print board
+message_buffer:  .space 128    # Buffer for delayed messages
+current_message: .word 0       # Pointer to current message
+
+# For save action history
+action_history:  .space 40000  # max 10000 moves * 4 bytes/move
+action_count:  	 .word 0	   # Action count to write history     
+
+# Data section for direction vectors
+ai_dir_dx: 		 .word  0, 1, 1, 1, 0, -1, -1, -1
+ai_dir_dy: 		 .word -1, -1, 0, 1, 1, 1, 0, -1
+
+# Simple ASCII border characters
+strTopLeft:      .asciiz "+"
+strTopRight:     .asciiz "+"
+strBottomLeft:   .asciiz "+"
+strBottomRight:  .asciiz "+"
+strVertical:     .asciiz "|"
+strHorizontal:   .asciiz "-"
+strCross:        .asciiz "+"
+strTLeft:        .asciiz "+"
+strTRight:       .asciiz "+"
+strTTop:         .asciiz "+"
+strTBottom:      .asciiz "+"
+
+# Number of games
+game_count:      .word 0
+
+# Flag to track undo state (0 = no recent undo, 1 = just undid)
+undo_flag:       .word 0      
+
+# Variables to store winning line coordinates
+win_start_x:     .word 0
+win_start_y:     .word 0
+win_end_x:       .word 0
+win_end_y:       .word 0
+ 
+# Variables to store the last move
+last_move_x:     .word -1
+last_move_y:     .word -1
+last_player:     .word 0
+ai_last_move:    .word 0
+ai_move_x:		 .word -1
+ai_move_y:       .word -1
+
+# Variables to store time played
+start_time:      .word 0
+end_time:        .word 0
+player1_time:    .word 0      # Player 1's remaining time (seconds)
+player2_time:    .word 0      # Player 2's remaining time (seconds)
+last_tick:       .word 0      # Last system time tick (for time calculation)
+
+# Add variables
+game_mode:		 .word 0	  # 0 = default, 1 = custom
+game_opponent:   .word 0      # 0 = human vs human, 1 = human vs AI
+human_side:      .word 1      # 1 = human is Player 1, 2 = human is Player 2
+reset_score:	 .word 0
+ai_phase12:		 .word 0 	
+
+# For puzzle type
+puzzle_type:	 .word 0 	  # 0 = blank type, 1 = puzzle type
+random_count: 	 .word 0 
+
+# Score tracking
+player1_score:   .word 0      # Win matchs of Player 1
+player2_score:   .word 0      # Win matchs of Player 2
+ties:            .word 0      # Tie matchs
+
+# Strings
+strAIPlay:		 .asciiz "AI plays at:"
+strAITurn:       .asciiz "AI is thinking...\n"
+strP1:			 .asciiz "AI found a move in phase 1: Build AI 5 in rows\n"
+strP2:			 .asciiz "AI found a move in phase 2: Block human 4 in rows\n"
+strP3:			 .asciiz "AI found a move in phase 3: Build AI 4 in rows\n"
+strP4:			 .asciiz "AI found a move in phase 4: Block human 3 in rows\n"
+strP5:			 .asciiz "AI found a move in phase 5: Build AI at intersection\n"
+strP6:			 .asciiz "AI found a move in phase 6: Block human at intersection\n"
+strP7:			 .asciiz "AI found a move in phase 7: Build AI 3 in rows\n"
+strP8:			 .asciiz "AI found a move in phase 8: Block human 2 in rows\n"
+strP9:			 .asciiz "AI found a move in phase 9: Build AI 2 in rows\n"
+strP10:			 .asciiz "AI found a move in phase 10: Build near last human move and AI moves\n"
+strP11:			 .asciiz "AI found a move in phase 11: Build near last human move only\n"
+strP12:			 .asciiz "AI found a move in phase 12: Find random a human move\n"
+strP13:			 .asciiz "AI found a move in phase 13: Play near a random move on board\n"
+strP14:			 .asciiz "AI found a move in phase 14: Random a move on board\n"
+strInfinite:     .asciiz "Infinite. \n"
+strInfi:     	 .asciiz "Infinite."
+strAllocError:   .asciiz "Error: Could not allocate memory for game board!\n"
+strChooseMode:	 .asciiz "Do you want to play as default or custom mode? (d/c): "
+strInvalidDC:    .asciiz "Invalid input! Please enter 'd' or 'c'.\n"
+strSize:		 .asciiz "Please input length of board (1-100): "
+strNumToWin:	 .asciiz "Please input number of consecutive cells to win (1-10): "
+strTimeLimit:    .asciiz "Please input time limit as seconds (1-1000) or 'i' for infinite time: "
+strAddTime:      .asciiz "Please input additional time after per move (0-10): "
+strTimeout:      .asciiz "Time's up! Current player loses.\n"
+strWinByTo: 	 .asciiz " (Won by timeout).\n"
+strWinBySrd:	 .asciiz " (Won by surrender).\n"
+strPlayer1Play:  .asciiz "Player 1 play time: "
+strPlayer2Play:  .asciiz "Player 2 play time: "
+strSeconds:      .asciiz " seconds. \n"
+strSpecialU: 	 .asciiz "(enter 'u' to undo player "
+strSpecialS: 	 .asciiz "'s last move or 's' to surrender): "
+strInvalidCmd:   .asciiz "Invalid command! Enter as x,y or 'u' or 's'.\n"
+strPrompt1:      .asciiz "Player 1, please input your coordinates "
+strPrompt2:      .asciiz "Player 2, please input your coordinates "
+strInvalid:      .asciiz "Input out of range! Please try again.\n"
+strInvalidDigit: .asciiz "Invalid input! Please enter only digits.\n"
+strInvalidTime:  .asciiz "Invalid input! Please enter only digits or 'i'.\n"
+strOcc:          .asciiz "Position already occupied! Try again.\n"
+strResult:		 .asciiz "Result: "
+strPlayer:       .asciiz "Player "
+strWins:         .asciiz " wins after "
+strMoves:		 .asciiz " moves!"
+strTie:          .asciiz "Tie, board is full after "
+strFileName:     .asciiz "result.txt"
+strNewLine:      .asciiz "\n"
+strInfo:		 .asciiz "Information about game "
+strRestResult:	 .asciiz ":\n"
+strMode:         .asciiz " [MODE: "
+strDefaultMode:  .asciiz "Default"
+strCustomMode:   .asciiz "Custom"
+strParamsStart:  .asciiz " ("
+strParamsEnd:    .asciiz ")"
+strParamsEnd2:	 .asciiz ")]:\n"
+strOpponent:     .asciiz ", OPPONENT: "
+strHuman:        .asciiz "Human]:\n"
+strAI:           .asciiz "AI"
+strSizeLabel:    .asciiz "SIZE: "
+strWinLabel:     .asciiz "NUM_TO_WIN: "
+strTimeLabel:    .asciiz "TIME_LIMIT: "
+strAddLabel:	 .asciiz "ADD_TIME: "
+strBoardLabel:	 .asciiz "BOARD_TYPE: "
+strBlank:		 .asciiz "Blank"
+strPuzzle:		 .asciiz "Puzzle"
+strWinLine:      .asciiz "Winning line from ("
+strComma:        .asciiz ","
+strTo:           .asciiz ") to ("
+strCloseParen:   .asciiz ")."
+strPlayAgain:    .asciiz "Do you want to replay, exit or choose mode? (r/e/m): "
+strInvalidREM:   .asciiz "Invalid input! Please enter 'r' or 'e' or 'm'.\n"
+strUndo:         .asciiz "Undo last move.\n"
+strSurrender:    .asciiz "Player surrendered. Next player wins!\n"
+strNoMoveUndo:   .asciiz "Cannot undo because there is no move yet!\n"
+strUndoOne:		 .asciiz "Can undo only one move!\n"
+strExit:		 .asciiz "\nEnd of the game!\n"
+strMoveHistory:  .asciiz "Action history:"
+strUndoHist:     .asciiz "Undo"
+strTimeoutHist:  .asciiz "Timeout"
+strSurrHist:	 .asciiz "Surrender"
+strChooseOpp:    .asciiz "Play against human or AI? (h/a): "
+strInvalidHC:    .asciiz "Invalid input! Please enter 'h' or 'a'.\n"
+strAskUndo:		 .asciiz "Are you sure about your last move? (Cannot undo after AI turn) (y/n): "
+strInvalidYN:    .asciiz "Invalid input! Please enter 'y' or 'n'.\n"
+strChooseSide:   .asciiz "Do you want to play as X or O against AI? (x/o): "
+strInvalidSide:  .asciiz "Invalid input! Please enter 'x' or 'o'.\n"
+strPlayer1AI:    .asciiz "You are Player 1 (X) against AI (O)\n"
+strPlayer2AI:    .asciiz "You are Player 2 (O) against AI (X)\n"
+strAskRandMoves: .asciiz "Do you want to play on blank or puzzle (already had random moves) board at begin? (b/p): "
+strInvalidBP:    .asciiz "Invalid input! Please enter 'b' or 'p'.\n"
+strRandomMoves:  .asciiz "Random moves placed on board: "
+strScoreTitle:   .asciiz "\nCurrent score (reset when choose mode):"
+strPlayer1Csl:	 .asciiz " (Player 1: "
+strPlayer2Csl:	 .asciiz ", Player 2: "
+strTiesCsl: 	 .asciiz ", Ties: "
+strPlayer1:      .asciiz " (PLAYER 1: "
+strPlayer2:      .asciiz ", PLAYER 2: "
+strTies:         .asciiz ", TIES: "
+strReset:        .asciiz ", RESET: "
+strYes:			 .asciiz "Yes"
+strNo:			 .asciiz "No"
+strDot:			 .asciiz ")."
+strNoUndoAfterAI:.asciiz "Cannot undo after AI's move!\n"
+strNoLastMove:   .asciiz "No last move to display mini board.\n"
+strMiniBoard:	 .asciiz "     Mini board (15x15 centered around last move):\n\n"
+strCount:   	 .asciiz "     Move count: "
+strEndHist:		 .asciiz "     End history.\n"
+strPlayer1Time:  .asciiz "     Player 1 time left (s): "
+strPlayer2Time:  .asciiz "     Player 2 time left (s): "
+strInitialBoard: .asciiz "     Initial board:\n\n"
+strFinalBoard: 	 .asciiz "     Final board:\n\n"
+strScore:   	 .asciiz "     Score: "
+strSeparator:    .asciiz "======================================================================================================================================================\n\n"
+strEndGame:      .asciiz "------------------------------ END GAME ------------------------------\n"
+
+# ASCII Art
+gomoku_art1:     .asciiz "\n"
+gomoku_art2:     .asciiz "      ,----.     ,-----.  ,--.   ,--.  ,-----.  ,--. ,--. ,--. ,--. \n"
+gomoku_art3:     .asciiz "     '  .-./    '  .-.  ' |   `.'   | '  .-.  ' |  .'   / |  | |  | \n"
+gomoku_art4:     .asciiz "     |  | .---. |  | |  | |  |'.'|  | |  | |  | |  .   '  |  | |  | \n"
+gomoku_art5:     .asciiz "     '  '--'  | '  '-'  ' |  |   |  | '  '-'  ' |  |\\   \\ '  '-'  ' \n"
+gomoku_art6:     .asciiz "      `------'   `-----'  `--'   `--'  `-----'  `--' '--'  `-----' \n"
+
+# --------------- MACRO OVERVIEW -------------- #
+
+# CONSOLE PART MACROS (Console_part.mac):
+# display_label
+# choose_mode
+# choose_opponent
+# ask_puzzle_type
+# generate_random_moves
+# choose_game_information
+# create_initial_board
+# start_timer
+# update_player_time
+# update_ai_time
+# add_player_time
+# determine_side_check
+# check_timeout
+# check_ai_timeout
+# set_time_to_zero
+# display_time_remaining
+# display_move_count
+# ask_replay
+# reset_game
+# print_mini_board
+# print_board
+# get_player_input
+# make_move($x, $y, $player)
+# ai_make_move (AI_part.mac)
+# print_ai_move
+# ask_undo_before_ai_move
+# undo_last_move
+# check_dir($x, $y, $player, $dx, $dy)
+# check_win($x, $y, $player)
+# check_tie
+# switch_player
+# update_score($tie)
+# display_win_message($player)
+# display_win_line
+# display_tie_message
+# display_score
+
+# FILE PART MACROS (File_part.mac):
+# write_buffer($char_ascii)
+# write_number($number)
+# write_spaces($count)
+# write_newline
+# record_action_history ($type, $player, $x, $y)
+# save_action_history
+# save_file_header
+# save_move_col
+# save_board_row($row_num)
+# save_initial_board_row($row_num)
+# save_bottom_border
+# save_initial_board
+# save_time_played
+# save_win_result
+# save_tie_result
+# save_score
+# save_result
+# save_endgame_massage
+
+# REGISTERS:
+# $sp: For backup data using stack
+# $v0, $v1: For results
+# $a0, $a1, $a2: For print console and file
+# $a3: For $count of write_spaces($count)
+# $s0: For current player
+# $s1: For SIZE
+# $s2: For NUM_TO_WIN
+# $s3: For x direction
+# $s4: For y direction
+# $s5: For TIME_LIMIT, ADD_TIME, check cells
+# $s6: For determine file
+# $s7: For move count
+# $t0-$t9: For different purposes(temp)

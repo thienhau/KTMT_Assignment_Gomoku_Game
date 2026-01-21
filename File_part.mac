@@ -1,0 +1,1441 @@
+# ----------------- FILE PART ----------------- #
+
+# ------------------------------------------------------------------------------
+# MACRO: write_buffer ($char_ascii)											   	
+#																			   	
+# Writes a single character from inputBuffer to file						   		
+# Parameters: char_ascii - ASCII value to write     
+# Registers use: $s6, $a0-$a2, $v0, $char_ascii      
+# ------------------------------------------------------------------------------
+.macro write_buffer ($char_ascii)
+    sb $char_ascii, inputBuffer    # Store character in buffer
+    move $a0, $s6                  # File descriptor
+    la $a1, inputBuffer            
+    li $a2, 1                      
+    li $v0, 15                     
+    syscall
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: write_number ($number)
+#
+# Writes a number (0-99999) to file
+# Parameters: number - value to write
+# Registers use: $t1-$t2, $number, $sp
+# ------------------------------------------------------------------------------
+.macro write_number ($number)
+	# Backup because $number will be changed
+	addi $sp, $sp, -4
+	sw $number, 0($sp)
+	
+    # Handle five-digit numbers
+    li $t2, 10000
+    blt $number, $t2, check_four_digit_num  # If less than 10000
+    
+    # Five-digit number
+    div $number, $t2
+    mflo $t1                      # Tens of thousands digit
+    addi $t1, $t1, 48          
+    write_buffer($t1)
+    
+    mfhi $number                  # Get remainder (last four digits)
+    bge $number, 1000, check_four_digit_num
+    li $t1, 48
+    write_buffer($t1)	# Special case x000x
+    bge $number, 100, check_three_digit_num
+    li $t1, 48
+    write_buffer($t1)	# Special case x00xx
+    bge $number, 10, check_two_digit_num
+    li $t1, 48
+    write_buffer($t1)	# Special case x0xxx
+    
+	check_four_digit_num:
+    	li $t2, 1000
+    	blt $number, $t2, check_three_digit_num  # If less than 1000
+    
+		# Four-digit number
+        div $number, $t2
+        mflo $t1                      # Thousands digit
+        addi $t1, $t1, 48          
+        write_buffer($t1)
+        
+        mfhi $number                  # Get remainder (last three digits)
+        bge $number, 100, check_three_digit_num
+        li $t1, 48
+        write_buffer($t1)	# Special case x00x
+        bge $number, 10, check_two_digit_num
+        li $t1, 48
+        write_buffer($t1)	# Special case x0xx
+        
+    	check_three_digit_num:
+        	li $t2, 100
+        	blt $number, $t2, check_two_digit_num  # If less than 100
+        
+        	# Three-digit number
+        	div $number, $t2
+        	mflo $t1                      # Hunders digit
+        	addi $t1, $t1, 48
+        	write_buffer($t1)
+    
+        	mfhi $number                  # Get remainder (last two digits)
+        	bge $number, 10, check_two_digit_num
+        	li $t1, 48
+        	write_buffer($t1)	# Special case x0x
+        
+    		check_two_digit_num:
+        		li $t2, 10
+        		blt $number, $t2, single_digit_num  # If less than 10
+        
+        		# Two-digit number
+        		div $number, $t2
+        		mflo $t1                      # Tens digit
+        		addi $t1, $t1, 48
+        		write_buffer($t1)
+    
+        		mfhi $number                  # Ones digit
+        
+    			single_digit_num:
+        			addi $number, $number, 48            
+        			write_buffer($number)
+    						
+    lw $number, 0($sp)
+    addi $sp, $sp, 4
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: write_spaces ($count)
+#
+# Writes multiple spaces to file
+# Parameters: count - number of spaces to write
+# Registers use: $t8-$t9, $count
+# ------------------------------------------------------------------------------
+.macro write_spaces ($count)
+    li $t8, 32                    # ASCII space
+    li $t9, 0                     # Counter
+     
+	space_loop:
+    	beq $t9, $count, end_spaces
+    	write_buffer($t8)
+    	addi $t9, $t9, 1
+    	j space_loop
+    	
+	end_spaces:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: write_newline
+#
+# Writes a newline character to file
+# Registers use: $t8
+# ------------------------------------------------------------------------------
+.macro write_newline
+    li $t8, 10                    # ASCII newline
+    write_buffer($t8)
+.end_macro
+
+# -------------------------------------------------------------------
+# MACRO: record_action_history ($type, $player, $x, $y)
+#
+# Description: Records one action to action_history array
+# $type: 0 = move, 1 = undo, 2 = timeout, 3 = surrender
+# $player: 1 or 2
+# $x, $y: coordinates (ignored if not a move)
+# Registers use: $t2-$t3, $t6-$t8, $type, $player, $x, $y
+# -------------------------------------------------------------------
+.macro record_action_history($type, $player, $x, $y)
+    # Only save when action_count < MAX_MOVES
+    lw $t6, action_count
+    li $t7, 10000
+    bge $t6, $t7, end_record
+    
+    mul $t7, $t6, 4
+    la $t2, action_history
+    add $t3, $t2, $t7
+
+    sb $type, 0($t3)
+    sb $player, 1($t3)
+    
+    # Save coordinates only when normal move
+    bne $type, 0, no_coords
+    sb $x, 2($t3)
+    sb $y, 3($t3)
+    j end_store
+    
+	no_coords:
+    	# If special command, set x, y to -1
+    	li $t8, -1
+    	sb $t8, 2($t3)
+    	sb $t8, 3($t3)
+    
+	end_store:
+    	addi $t6, $t6, 1
+    	sw $t6, action_count
+    	
+	end_record:
+.end_macro
+
+# -------------------------------------------------------------------
+# MACRO: save_action_history
+#
+# Description: Writes all move history to the result file
+# Registers use: $t0-$t9, $s6, $a0-$a3, $v0
+# -------------------------------------------------------------------
+.macro save_action_history
+    li $a3, 5
+    write_spaces($a3)
+    move $a0, $s6
+    la $a1, strMoveHistory
+    li $a2, 15
+    li $v0, 15
+    syscall
+    write_newline
+
+    li $t0, 0                  # Index
+    lw $t1, action_count       # Total moves
+    blez $t1, save_move_done   # Skip if no move
+
+	save_move_loop:
+    	beq $t0, $t1, save_move_done
+   		mul $t2, $t0, 4
+    	la $t3, action_history
+    	add $t4, $t3, $t2
+
+    	lb $t5, 0($t4)             # action type
+    	lb $t6, 1($t4)             # player
+    
+    	# Skip if player not is 1 or 2
+    	blt $t6, 1, skip_move
+    	bgt $t6, 2, skip_move
+
+    	# Write number
+    	# Calculate spaces to print (10 - num length)
+    	li $t7, 1                  # Number = index + 1
+    	add $t7, $t7, $t0
+    	remu $t7, $t7, 10000
+    
+    	# Calculate number length
+    	li $t8, 0                  # Length
+    	move $t9, $t7
+    
+	count_digits:
+    	addi $t8, $t8, 1           # Increase length
+    	div $t9, $t9, 10           # Divide 10
+    	bnez $t9, count_digits     # Loop if not = 0
+    
+    	# Spaces = 10 - length
+    	li $a3, 10
+    	sub $a3, $a3, $t8
+    	write_spaces($a3)
+    	
+    	# Write number
+    	write_number($t7)
+    	li $t9, 46                 # '.'
+    	write_buffer($t9)
+    	li $a3, 1
+    	write_spaces($a3)
+
+    	# Write player
+    	move $a0, $s6
+    	la $a1, strPlayer
+    	li $a2, 7
+    	li $v0, 15
+    	syscall
+    
+    	addi $t6, $t6, 48
+    	write_buffer($t6)
+    	li $a3, 1
+    	write_spaces($a3)
+
+    	# Handle action types
+    	beq $t5, 0, move_action
+    	beq $t5, 1, undo_action
+    	beq $t5, 2, surrender_action
+    	beq $t5, 3, timeout_action
+    	j skip_move
+    
+	move_action:
+    	lb $t7, 2($t4)   # x
+    	lb $t8, 3($t4)   # y
+    	blt $t7, 0, skip_move  # Skip if invalid
+    	blt $t8, 0, skip_move
+    
+    	li $t9, 40       # '('
+    	write_buffer($t9)
+    	write_number($t7)
+    	move $a0, $s6
+    	la $a1, strComma
+    	li $a2, 1
+    	li $v0, 15
+    	syscall
+    	write_number($t8)
+    	li $t9, 41       # ')'
+    	write_buffer($t9)
+    	j next_move
+
+	undo_action:
+    	move $a0, $s6
+    	la $a1, strUndoHist
+    	li $a2, 4
+    	li $v0, 15
+    	syscall
+    	j next_move
+    	
+	surrender_action:
+    	move $a0, $s6
+    	la $a1, strSurrHist
+    	li $a2, 9
+    	li $v0, 15
+    	syscall
+    	write_newline
+    	j save_move_done
+
+	timeout_action:
+    	move $a0, $s6
+    	la $a1, strTimeoutHist
+    	li $a2, 7
+    	li $v0, 15
+    	syscall
+    	write_newline
+    	j save_move_done
+
+	next_move:
+    	write_newline
+
+	skip_move:
+    	addi $t0, $t0, 1
+    	j save_move_loop
+
+	save_move_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: save_file_header
+#
+# Writes the initial file header and column numbers
+# Registers use: $t0-$t1, $t3-$t4, $s6, $a0-$a3, $v0
+# ------------------------------------------------------------------------------
+.macro save_file_header
+    # Open file (append mode after first game)
+    lw $t0, game_count
+    beq $t0, 1, first_game
+    
+    # For subsequent games, open in append mode (9)
+    la $a0, strFileName
+    li $a1, 9
+    li $v0, 13
+    syscall
+    move $s6, $v0
+    
+    j header_done
+    
+    first_game:
+        la $a0, strFileName
+        li $a1, 1
+        li $v0, 13
+        syscall
+        move $s6, $v0
+        
+        # Write ASCII art to file        
+        li $a3, 39
+        write_spaces($a3)
+        li $v0, 15
+        move $a0, $s6
+        la $a1, gomoku_art2
+        li $a2, 69            # Length of line 2
+        syscall
+    
+        li $a3, 39
+        write_spaces($a3)
+        li $v0, 15
+        move $a0, $s6
+        la $a1, gomoku_art3
+        li $a2, 69            # Length of line 3
+        syscall
+        
+        li $a3, 39
+        write_spaces($a3)
+        li $v0, 15
+        move $a0, $s6
+        la $a1, gomoku_art4
+        li $a2, 69            # Length of line 4
+        syscall
+        
+        li $a3, 39
+        write_spaces($a3)
+        li $v0, 15
+        move $a0, $s6
+        la $a1, gomoku_art5
+        li $a2, 69            # Length of line 5
+        syscall
+    
+        li $a3, 39
+        write_spaces($a3)
+        li $v0, 15
+        move $a0, $s6
+        la $a1, gomoku_art6
+        li $a2, 68            # Length of line 6
+        syscall
+        
+        write_newline
+        
+        move $a0, $s6
+        la $a1, strSeparator
+        li $a2, 152
+        li $v0, 15
+        syscall
+
+    header_done:
+    # Write header with game count and mode info 
+    li $a3, 5
+    write_spaces($a3)    
+    move $a0, $s6
+    la $a1, strInfo
+    li $a2, 23
+    li $v0, 15
+    syscall
+    
+    # Write game number
+    lw $t0, game_count
+    write_number($t0)
+    
+    # Write mode information
+    move $a0, $s6
+    la $a1, strMode
+    li $a2, 8
+    li $v0, 15
+    syscall
+    
+    # Check if default or custom mode by comparing with default values
+    lw $t0, SIZE
+    li $t1, 15
+    bne $t0, $t1, custom_mode_save
+    
+    lw $t0, NUM_TO_WIN
+    li $t1, 5
+    bne $t0, $t1, custom_mode_save
+    
+    lw $t0, TIME_LIMIT
+    li $t1, 600
+    bne $t0, $t1, custom_mode_save
+    
+    lw $t0, ADD_TIME
+    li $t1, 0
+    bne $t0, $t1, custom_mode_save
+    
+    # Default mode
+    move $a0, $s6
+    la $a1, strDefaultMode
+    li $a2, 7
+    li $v0, 15
+    syscall
+    j write_mode_params
+    
+    custom_mode_save:
+        move $a0, $s6
+        la $a1, strCustomMode
+        li $a2, 6
+        li $v0, 15
+        syscall
+    
+	write_mode_params:
+        # Write parameters in parentheses
+        move $a0, $s6
+        la $a1, strParamsStart
+        li $a2, 2
+        li $v0, 15
+        syscall
+        
+        # Write SIZE
+        move $a0, $s6
+        la $a1, strSizeLabel
+        li $a2, 6
+        li $v0, 15
+        syscall
+        
+        lw $t0, SIZE
+        write_number($t0)
+        
+        # Write comma
+        move $a0, $s6
+        la $a1, strComma
+        li $a2, 2
+        li $v0, 15
+        syscall
+        
+        # Write NUM_TO_WIN
+        move $a0, $s6
+        la $a1, strWinLabel
+        li $a2, 12
+        li $v0, 15
+        syscall
+        
+        lw $t0, NUM_TO_WIN
+        write_number($t0)
+        
+        # Write comma
+        move $a0, $s6
+        la $a1, strComma
+        li $a2, 2
+        li $v0, 15
+        syscall
+        
+        # Write TIME_LIMIT
+        move $a0, $s6
+        la $a1, strTimeLabel
+        li $a2, 12
+        li $v0, 15
+        syscall
+        
+        lw $t0, TIME_LIMIT
+        # Check for infinite time
+    	bltz $t0, infinite_time_mode
+        write_number($t0)
+        j write_time_done
+        
+        infinite_time_mode:
+        la $a1, strInfinite
+        li $a2, 8
+        li $v0, 15
+        syscall
+        write_time_done:
+        
+        # Write comma
+        move $a0, $s6
+        la $a1, strComma
+        li $a2, 2
+        li $v0, 15
+        syscall
+        
+        # Write ADD_TIME
+        move $a0, $s6
+        la $a1, strAddLabel
+        li $a2, 10
+        li $v0, 15
+        syscall
+        
+        lw $t0, ADD_TIME
+        write_number($t0)
+        
+        # Write comma
+        move $a0, $s6
+        la $a1, strComma
+        li $a2, 2
+        li $v0, 15
+        syscall
+        
+        # Write PUZZLE
+        move $a0, $s6
+        la $a1, strBoardLabel
+        li $a2, 12
+        li $v0, 15
+        syscall
+        
+        lw $t0, game_mode
+		beq $t0, 1, mode_custom
+			move $a0, $s6
+        	la $a1, strBlank
+        	li $a2, 5
+        	li $v0, 15
+        	syscall
+        	j puzzle_done
+		mode_custom:
+			lw $t0, puzzle_type
+			beq $t0, 1, puzzle_yes
+				move $a0, $s6
+        		la $a1, strBlank
+        		li $a2, 5
+        		li $v0, 15
+        		syscall
+        		j puzzle_done
+        	puzzle_yes:
+        		move $a0, $s6
+        		la $a1, strPuzzle
+        		li $a2, 6
+        		li $v0, 15
+        		syscall
+        puzzle_done:	
+        
+        # Write closing parenthesis
+        move $a0, $s6
+        la $a1, strParamsEnd
+        li $a2, 1
+        li $v0, 15
+        syscall
+        
+        # Add opponent information
+        move $a0, $s6
+        la $a1, strOpponent
+        li $a2, 12
+        li $v0, 15
+        syscall
+        
+        # Check game opponent (0 = human, 1 = AI)
+        lw $t0, game_opponent
+        beqz $t0, write_human_opponent
+        
+        # Write AI
+        move $a0, $s6
+        la $a1, strAI
+        li $a2, 2
+        li $v0, 15
+        syscall
+        
+        la $a1, strParamsStart
+        li $a2, 2
+        li $v0, 15
+        syscall
+        
+        la $a1, strPlayer
+        li $a2, 7
+        li $v0, 15
+        syscall
+        
+        lw $t4, human_side
+        li $t3, 3
+        sub $t4, $t3, $t4
+        write_number($t4)
+        
+        la $a1, strParamsEnd2
+        li $a2, 4
+        li $v0, 15
+        syscall
+        j write_opponent_done
+        
+        write_human_opponent:
+            # Write Human
+            move $a0, $s6
+            la $a1, strHuman
+            li $a2, 8
+            li $v0, 15
+            syscall
+            
+    write_opponent_done:    
+    # Write newlines
+    write_newline  
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: save_board_col
+#
+# Writes column numbers and top border
+# Registers use: $t0, $t8, $s1, $a0, $a3
+# ------------------------------------------------------------------------------
+.macro save_board_col
+	# Write column numbers header
+    # 8 spaces for alignment
+    li $a3, 8
+    write_spaces($a3)
+    
+    li $t0, 0       # Column counter for header
+    save_header_loop:
+        # Write column number        
+        write_number($t0)
+        
+        # Calculate spaces needed (5 for 1-digit, 4 for 2-digit)
+        blt $t0, 10, save_one_digit_header
+        li $a3, 4    # 4 spaces for 2-digit
+        j save_header_spaces
+        
+        save_one_digit_header:
+            li $a3, 5    # 5 spaces for 1-digit
+            
+        save_header_spaces:
+            write_spaces($a3)
+
+        addi $t0, $t0, 1
+        lw $s1, SIZE
+        blt $t0, $s1, save_header_loop
+    
+    # New line after header
+    write_newline
+    
+    # Write top border (5 spaces + border)
+    li $a3, 5
+    write_spaces($a3)
+    
+    li $t8, 43    # '+'
+    write_buffer($t8)
+    
+    li $t0, 0     # Column counter
+    save_top_border:
+        # Write 5 hyphens per cell
+        li $a3, 5
+        li $t8, 45    # '-'
+        save_top_hyphen:
+            write_buffer($t8)
+            addi $a3, $a3, -1
+            bgtz $a3, save_top_hyphen
+            
+        addi $t0, $t0, 1
+        lw $s1, SIZE
+        beq $t0, $s1, end_top_border
+        
+        # Write intersection
+        li $t8, 43    # '+'
+        write_buffer($t8)
+        j save_top_border
+        
+    end_top_border:
+        li $t8, 43    # '+'
+        write_buffer($t8)
+        write_newline
+.end_macro 
+
+# ------------------------------------------------------------------------------
+# MACRO: save_board_row ($row_num)
+#
+# Writes a single board row with row number
+# Registers use: $t0-$t8, $s1, $a3, $row_num
+# ------------------------------------------------------------------------------
+.macro save_board_row ($row_num)
+    # Write row number
+    blt $row_num, 10, save_single_digit_row
+    
+    # Double digit row number (1 space + number)
+    li $a3, 1
+    write_spaces($a3)
+    write_number($row_num)
+    
+    j save_row_continue
+    
+    save_single_digit_row:
+        # Single digit row number (2 spaces + number)
+        li $a3, 2
+        write_spaces($a3)        
+        write_number($row_num)
+
+    save_row_continue:
+    # Write left border
+    li $a3, 2
+    write_spaces($a3)
+    li $t8, 124    # '|'
+    write_buffer($t8)
+    
+    li $t1, 0      # Column counter
+    
+    save_inner:
+        # Calculate board position
+        lw $t2, SIZE
+        mul $t3, $row_num, $t2
+        add $t3, $t3, $t1
+        sll $t3, $t3, 2
+        lw $t4, board
+        add $t5, $t4, $t3
+        lw $t6, 0($t5)
+
+        # Write 1 space before symbol (centering in 5-char cell)
+        li $a3, 1
+        write_spaces($a3)
+        
+        # Determine what to write
+        li $t7, 1
+        beq $t6, $t7, save_X
+        li $t7, 2
+        beq $t6, $t7, save_O
+        
+        # Empty cell - centered dot
+        li $a3, 1
+        write_spaces($a3)
+        li $t8, 46      # '.'
+        write_buffer($t8)
+        li $a3, 1
+        write_spaces($a3)
+        j save_cell_end
+        
+        save_X:
+            li $t8, 91  # '['
+            write_buffer($t8)
+            li $t8, 88  # 'X'
+            write_buffer($t8)
+            li $t8, 93  # ']'
+            write_buffer($t8)
+            j save_cell_end
+            
+        save_O:
+            li $t8, 40  # '('
+            write_buffer($t8)
+            li $t8, 79  # 'O'
+            write_buffer($t8)
+            li $t8, 41  # ')'
+            write_buffer($t8)
+            
+        save_cell_end:
+            # Write 1 space after symbol (centering in 5-char cell)
+            li $a3, 1
+            write_spaces($a3)
+            
+            # Write right border
+            li $t8, 124    # '|'
+            write_buffer($t8)
+
+        addi $t1, $t1, 1
+        lw $s1, SIZE
+        blt $t1, $s1, save_inner
+
+    # New line after each row
+    write_newline
+    
+    # Skip divider for last row
+    lw $s1, SIZE
+    subi $s1, $s1, 1
+    beq $row_num, $s1, skip_divider_save
+    
+    # Write divider between rows (5 spaces + border)
+    li $a3, 5
+    write_spaces($a3)
+    li $t8, 43    # '+'
+    write_buffer($t8)
+    
+    li $t1, 0     # Column counter
+    save_divider_loop:
+        # Write 5 hyphens per cell
+        li $a3, 5
+        li $t8, 45    # '-'
+        save_hyphen_loop:
+            write_buffer($t8)
+            addi $a3, $a3, -1
+            bgtz $a3, save_hyphen_loop
+            
+        addi $t1, $t1, 1
+        lw $s1, SIZE
+        beq $t1, $s1, end_divider_save
+        
+        # Write intersection
+        li $t8, 43    # '+'
+        write_buffer($t8)
+        j save_divider_loop
+        
+    end_divider_save:
+        li $t8, 43    # '+'
+        write_buffer($t8)
+        write_newline
+        
+    skip_divider_save:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: save_initial_board_row ($row_num)
+#
+# Writes a single initial board row with row number
+# Registers use: $t0-$t8, $s1, $a3, $row_num
+# ------------------------------------------------------------------------------
+.macro save_initial_board_row ($row_num)
+    # Write row number
+    blt $row_num, 10, save_single_digit_row
+    
+    # Double digit row number (1 space + number)
+    li $a3, 1
+    write_spaces($a3)
+    write_number($row_num)
+    
+    j save_row_continue
+    
+    save_single_digit_row:
+        # Single digit row number (2 spaces + number)
+        li $a3, 2
+        write_spaces($a3)        
+        write_number($row_num)
+
+    save_row_continue:
+    # Write left border
+    li $a3, 2
+    write_spaces($a3)
+    li $t8, 124    # '|'
+    write_buffer($t8)
+    
+    li $t1, 0      # Column counter
+    
+    save_inner:
+        # Calculate initial board position
+        lw $t2, SIZE
+        mul $t3, $row_num, $t2
+        add $t3, $t3, $t1
+        sll $t3, $t3, 2
+        lw $t4, init_board
+        add $t5, $t4, $t3
+        lw $t6, 0($t5)
+
+        # Write 1 space before symbol (centering in 5-char cell)
+        li $a3, 1
+        write_spaces($a3)
+        
+        # Determine what to write
+        li $t7, 1
+        beq $t6, $t7, save_X
+        li $t7, 2
+        beq $t6, $t7, save_O
+        
+        # Empty cell - centered dot
+        li $a3, 1
+        write_spaces($a3)
+        li $t8, 46      # '.'
+        write_buffer($t8)
+        li $a3, 1
+        write_spaces($a3)
+        j save_cell_end
+        
+        save_X:
+            li $t8, 91  # '['
+            write_buffer($t8)
+            li $t8, 88  # 'X'
+            write_buffer($t8)
+            li $t8, 93  # ']'
+            write_buffer($t8)
+            j save_cell_end
+            
+        save_O:
+            li $t8, 40  # '('
+            write_buffer($t8)
+            li $t8, 79  # 'O'
+            write_buffer($t8)
+            li $t8, 41  # ')'
+            write_buffer($t8)
+            
+        save_cell_end:
+            # Write 1 space after symbol (centering in 5-char cell)
+            li $a3, 1
+            write_spaces($a3)
+            
+            # Write right border
+            li $t8, 124    # '|'
+            write_buffer($t8)
+
+        addi $t1, $t1, 1
+        lw $s1, SIZE
+        blt $t1, $s1, save_inner
+
+    # New line after each row
+    write_newline
+    
+    # Skip divider for last row
+    lw $s1, SIZE
+    subi $s1, $s1, 1
+    beq $row_num, $s1, skip_divider_save
+    
+    # Write divider between rows (5 spaces + border)
+    li $a3, 5
+    write_spaces($a3)
+    li $t8, 43    # '+'
+    write_buffer($t8)
+    
+    li $t1, 0     # Column counter
+    save_divider_loop:
+        # Write 5 hyphens per cell
+        li $a3, 5
+        li $t8, 45    # '-'
+        save_hyphen_loop:
+            write_buffer($t8)
+            addi $a3, $a3, -1
+            bgtz $a3, save_hyphen_loop
+            
+        addi $t1, $t1, 1
+        lw $s1, SIZE
+        beq $t1, $s1, end_divider_save
+        
+        # Write intersection
+        li $t8, 43    # '+'
+        write_buffer($t8)
+        j save_divider_loop
+        
+    end_divider_save:
+        li $t8, 43    # '+'
+        write_buffer($t8)
+        write_newline
+        
+    skip_divider_save:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: save_bottom_border
+#
+# Writes bottom border
+# Registers use: $t0, $t8, $s1, $a3
+# ------------------------------------------------------------------------------
+.macro save_bottom_border
+    li $a3, 5
+    write_spaces($a3)
+    
+    li $t8, 43    # '+'
+    write_buffer($t8)
+    
+    li $t0, 0     # Column counter
+    save_bot_border:
+        # Write 5 hyphens per cell
+        li $a3, 5
+        li $t8, 45    # '-'
+        save_bot_hyphen:
+            write_buffer($t8)
+            addi $a3, $a3, -1
+            bgtz $a3, save_bot_hyphen
+            
+        addi $t0, $t0, 1
+        lw $s1, SIZE
+        beq $t0, $s1, end_bot_border
+        
+        # Write intersection
+        li $t8, 43    # '+'
+        write_buffer($t8)
+        j save_bot_border
+        
+    end_bot_border:
+        li $t8, 43    # '+'
+        write_buffer($t8)
+        write_newline
+.end_macro 
+
+# ------------------------------------------------------------------------------
+# MACRO: save_initial_board
+#
+# Description: Saves the initial board state to file (for puzzle mode)
+# Registers use: $t0, $s1
+# ------------------------------------------------------------------------------
+.macro save_initial_board
+    save_board_col
+    # Write board with row numbers
+    li $t0, 0       # Row counter
+    save_row:
+        save_initial_board_row($t0)
+        addi $t0, $t0, 1
+        lw $s1, SIZE
+        blt $t0, $s1, save_row
+    save_bottom_border
+    write_newline
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: save_time_played
+#
+# Description: Save both players' play times to file
+# Registers use: $t0-$t6, $t9, $s5-$s7, $a0-$a2, $v0
+# ------------------------------------------------------------------------------
+.macro save_time_played
+	# Check for infinite time
+    lw $t9, TIME_LIMIT
+    bltz $t9, infinite_time_display
+    
+    lw $s7, move_count
+    andi $t0, $s7, 1
+    beqz $t0, even_moves
+    
+    odd_moves:
+    srl $t6, $s7, 1
+    addi $t5, $t6, 1
+    j determine_move_done
+    
+    even_moves:
+    srl $t5, $s7, 1
+    srl $t6, $s7, 1
+    
+    determine_move_done:
+    # Player 1's actual play time
+    lw $t0, TIME_LIMIT          # Base time
+    lw $t1, ADD_TIME            # Additional time per move
+    move $t2, $t5			    # Number of moves
+    mul $t3, $t1, $t2           # ADD_TIME * move_count
+    add $t0, $t0, $t3           # TIME_LIMIT + (ADD_TIME * move_count)
+    lw $t4, player1_time        # Remaining time
+    sub $t0, $t0, $t4           # Final calculation
+    
+    # Player 1's time
+    move $a0, $s6
+    la $a1, strPlayer1Play
+    li $a2, 20
+    li $v0, 15
+    syscall
+    
+    write_number($t0)
+    
+    move $a0, $s6
+    la $a1, strSeconds
+    li $a2, 10
+    li $v0, 15
+    syscall
+    
+    # Player 2's actual play time
+    lw $t0, TIME_LIMIT          # Base time
+    lw $t1, ADD_TIME            # Additional time per move
+    move $t2, $t6			    # Number of moves
+    mul $t3, $t1, $t2           # ADD_TIME * move_count
+    add $t0, $t0, $t3           # TIME_LIMIT + (ADD_TIME * move_count)
+    lw $t4, player2_time        # Remaining time
+    sub $t0, $t0, $t4           # Final calculation
+    
+    # Player 2's time
+    move $a0, $s6
+    la $a1, strPlayer2Play
+    li $a2, 20
+    li $v0, 15
+    syscall
+    
+    write_number($t0)
+    
+    move $a0, $s6
+    la $a1, strSeconds
+    li $a2, 11
+    li $v0, 15
+    syscall
+    
+    j time_display_done
+    
+    infinite_time_display:
+        # Player 1's time
+        move $a0, $s6
+        la $a1, strPlayer1Play
+        li $a2, 20
+        li $v0, 15
+        syscall
+        
+        la $a1, strInfinite
+        li $a2, 10
+        li $v0, 15
+        syscall
+        
+        # Player 2's time
+        move $a0, $s6
+        la $a1, strPlayer2Play
+        li $a2, 20
+        li $v0, 15
+        syscall
+        
+        la $a1, strInfinite
+        li $a2, 11
+        li $v0, 15
+        syscall
+        
+    time_display_done:
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: save_win_result
+#
+# Writes the win result, moves count, time played and winning line to file
+# Registers use: $t0-$t1, $s6-$s7, $a0-$a3, $v0
+# ------------------------------------------------------------------------------
+.macro save_win_result
+    # ---- 1. Save win message
+    li $a3, 5
+    write_spaces($a3)
+    
+    la $a1, strResult
+    li $a2, 8
+    li $v0, 15
+    syscall
+    
+    la $a1, strPlayer
+    li $a2, 7
+    li $v0, 15
+    syscall
+    
+    lw $s0, current_player
+    addi $t0, $s0, 48
+    write_buffer($t0)
+    
+    la $a1, strWins
+    li $a2, 12
+    li $v0, 15
+    syscall
+    
+    # ---- 2. Save move count
+    lw $t0, move_count
+    write_number($t0)
+
+    la $a1, strMoves
+    li $a2, 7
+    li $v0, 15
+    syscall
+    
+    # ---- 3. Check win type
+    lw $t0, last_move_x
+    li $t1, -1
+    beq $t0, $t1, save_surrender
+    li $t1, -2
+    beq $t0, $t1, save_timeout
+    
+    # Normal win - show winning line
+    # Write space
+    li $a3, 1
+    write_spaces($a3)
+        
+    # ---- 4. Write win line to file   
+    move $a0, $s6
+    la $a1, strWinLine
+    li $a2, 19
+    li $v0, 15
+    syscall
+
+    lw $t0, win_start_x
+    write_number($t0)
+
+    move $a0, $s6
+    la $a1, strComma
+    li $a2, 1
+    li $v0, 15
+    syscall
+
+    lw $t0, win_start_y
+    write_number($t0)
+
+    move $a0, $s6
+    la $a1, strTo
+    li $a2, 6
+    li $v0, 15
+    syscall
+
+    lw $t0, win_end_x
+    write_number($t0)
+
+    move $a0, $s6
+    la $a1, strComma
+    li $a2, 1
+    li $v0, 15
+    syscall
+
+    lw $t0, win_end_y
+    write_number($t0)
+
+    move $a0, $s6
+    la $a1, strCloseParen
+    li $a2, 2
+    li $v0, 15
+    syscall
+
+    j save_win_done
+    
+    save_surrender:
+        move $a0, $s6
+        la $a1, strWinBySrd
+        li $a2, 20
+        li $v0, 15
+        syscall
+        j save_win_done
+        
+    save_timeout:
+        move $a0, $s6
+        la $a1, strWinByTo
+        li $a2, 18
+        li $v0, 15
+        syscall
+
+    save_win_done:
+        li $a3, 1
+        write_spaces($a3)
+        
+        # ---- 5. Write played time
+        save_time_played
+        
+        move $a0, $s6
+        la $a1, strNewLine
+        li $a2, 1
+        li $v0, 15
+        syscall
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: save_tie_result
+#
+# Writes the tie result to file
+# Registers use: $a0-$a3, $v0
+# ------------------------------------------------------------------------------
+.macro save_tie_result
+	li $a3, 5
+    write_spaces($a3)
+	
+    la $a1, strTie
+    li $a2, 25
+    li $v0, 15
+    syscall
+    
+    lw $t0, move_count
+    write_number($t0)
+    
+    la $a1, strMoves
+    li $a2, 7
+    li $v0, 15
+    syscall
+    
+    li $a3, 1
+    write_spaces($a3)
+    
+    save_time_played
+    
+    la $a1, strNewLine
+    li $a2, 1
+    li $v0, 15
+    syscall
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: save_score
+#
+# Description: Saves the current match score to the result file
+# Registers use: $t0, $s6, $a0-$a3, $v0
+# ------------------------------------------------------------------------------
+.macro save_score
+	# Write score header
+    move $a0, $s6
+    la $a1, strScore
+    li $a2, 11
+    li $v0, 15
+    syscall
+    
+    # Write Player 1 score
+    move $a0, $s6
+    la $a1, strPlayer1
+    li $a2, 12
+    li $v0, 15
+    syscall
+    
+    lw $t0, player1_score
+    write_number($t0)
+    
+    # Write separator
+    move $a0, $s6
+    la $a1, strPlayer2
+    li $a2, 12
+    li $v0, 15
+    syscall
+    
+    # Write Player 2 score
+    lw $t0, player2_score
+    write_number($t0)
+    
+    # Write separator
+    move $a0, $s6
+    la $a1, strTies
+    li $a2, 8
+    li $v0, 15
+    syscall
+    
+    # Write ties count
+    lw $t0, ties
+    write_number($t0)
+    
+    # Write separator
+    move $a0, $s6
+    la $a1, strReset
+    li $a2, 9
+    li $v0, 15
+    syscall
+    
+    lw $t0, reset_score
+    beqz $t0, no_reset_score
+    
+    yes_reset_score:
+    move $a0, $s6
+    la $a1, strYes
+    li $a2, 3
+    li $v0, 15
+    syscall
+    j reset_done
+    
+    no_reset_score:
+    move $a0, $s6
+    la $a1, strNo
+    li $a2, 2
+    li $v0, 15
+    syscall
+    
+    reset_done:
+    sw $zero, reset_score
+    
+    # Write dot
+    move $a0, $s6
+    la $a1, strDot
+    li $a2, 2
+    li $v0, 15
+    syscall
+    
+    write_newline
+    write_newline
+.end_macro
+
+# ------------------------------------------------------------------------------
+# MACRO: save_result
+#
+# Main macro that coordinates saving the game result
+# Registers use: $t0-$t1, $s6, $a0-$a2, $v0
+# ------------------------------------------------------------------------------
+.macro save_result
+    save_file_header
+
+    la $a1, strInitialBoard
+    li $a2, 21
+    li $v0, 15
+    syscall 
+    save_initial_board
+    
+    la $a1, strFinalBoard
+    li $a2, 19
+    li $v0, 15
+    syscall 
+    save_board_col
+    
+    # Write board with row numbers
+    li $t0, 0       # Row counter
+    save_outer:
+        save_board_row($t0)
+        addi $t0, $t0, 1
+        lw $s1, SIZE
+        blt $t0, $s1, save_outer
+        
+    save_bottom_border
+    write_newline
+	save_action_history
+	la $a1, strEndHist
+    li $a2, 18
+    li $v0, 15
+    syscall 
+	write_newline
+    
+    # Write result
+    check_tie
+    beq $v0, 1, save_tie
+    
+    save_win_result
+    j save_done
+    
+    save_tie:
+        save_tie_result
+        
+    save_done:
+    	save_score
+        move $a0, $s6
+    	la $a1, strSeparator
+    	li $a2, 152
+    	li $v0, 15
+    	syscall
+    	
+    	# Close file
+    	move $a0, $s6
+        li $v0, 16
+        syscall
+.end_macro
+
+
+# ------------------------------------------------------------------------------
+# MACRO: save_endgame_message
+#
+# Description: Save endgame message to file
+# Registers use: $s6, $a0-$a3, $v0
+# ------------------------------------------------------------------------------
+.macro save_endgame_message
+    la $a0, strFileName
+    li $a1, 9              
+    li $v0, 13
+    syscall
+    move $s6, $v0
+        
+    li $a3, 40
+    write_spaces($a3)
+        
+    move $a0, $s6
+    la $a1, strEndGame
+    li $a2, 71            
+    li $v0, 15
+    syscall
+        
+    # Close file
+    move $a0, $s6
+    li $v0, 16
+    syscall 
+.end_macro 

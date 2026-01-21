@@ -1,0 +1,3662 @@
+# ------------------ AI PART ------------------ #
+
+# ------------------------------------------------------------------------------
+# MACRO: ai_make_move
+#
+# Description: Make AI move logic that (also check to skip meaningless moves if can):
+#  1. Build 5 in rows from 4 in all 8 direction
+#  2. Block human 4 in rows
+#  3. Build 4 in rows from 3
+#  4. Block human 3 in rows (only when open 2 ends)
+#  5. Build at intersection of two AI potential lines
+#  6. Block at intersection of two human potential lines
+#  7. Build 3 in rows from 2
+#  8. Block human 2 in rows (only when open 2 ends)
+#  9. Build 2 in rows from 1
+# 10. Play near last human move and AI moves
+# 11. Play near last human move only
+# 12. Find random a human move and do 10-11 again
+# 13. Play near a random move on board (+-2 cells)
+# 14. Random a move on board
+# Output: $v0 = x coordinate, $v1 = y coordinate
+# Registers use: $t0-$t9, $s0-$s7, $a0-$a3, $v0-$v1, $sp
+# ------------------------------------------------------------------------------
+.macro ai_make_move
+	addi $sp, $sp, -76
+	sw $ra, 0($sp)
+    sw $t0, 4($sp)
+    sw $t1, 8($sp)
+    sw $t2, 12($sp)
+    sw $t3, 16($sp)
+    sw $t4, 20($sp)
+    sw $t5, 24($sp)
+    sw $t6, 28($sp)
+    sw $t7, 32($sp)
+    sw $t8, 36($sp)
+    sw $t9, 40($sp)
+    sw $s0, 44($sp)
+    sw $s1, 48($sp)
+    sw $s2, 52($sp)
+    sw $s3, 56($sp)
+    sw $s4, 60($sp)
+    sw $s5, 64($sp)
+    sw $s6, 68($sp)
+    sw $s7, 72($sp)
+    
+    # =============================================
+    # AI move initial
+    # =============================================
+    la $a0, strAITurn	    # Show AI turn message
+    li $v0, 4
+    syscall
+    
+    sw $zero, ai_phase12
+    
+    # =============================================
+    # Priority 1: Build 5 from AI's 4
+    # =============================================
+    li $t0, 0                  # x coordinate
+    ai_win_x_loop:
+        li $t1, 0              # y coordinate
+        ai_win_y_loop:
+            li $t2, 0          # direction (0-7)
+            ai_win_dir_loop:
+                li $t3, 0      # offset (0-1)
+                ai_win_offset_loop:
+                    li $t4, 0  # AI stone count
+                    li $t5, -1 # empty x
+                    li $t6, -1 # empty y
+                    li $t7, 0  # step counter
+                    
+                    ai_win_step_loop:
+                        # Calculate nx = x + (offset + step) * dx[dir]
+                        add $t8, $t3, $t7
+                        la $s6, ai_dir_dx
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dx[dir]
+                        mul $t8, $t8, $s7
+                        add $t8, $t0, $t8     # nx
+                        
+                        # Calculate ny = y + (offset + step) * dy[dir]
+                        add $t9, $t3, $t7
+                        la $s6, ai_dir_dy
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dy[dir]
+                        mul $t9, $t9, $s7
+                        add $t9, $t1, $t9     # ny
+                        
+                        # Check bounds
+                        bltz $t8, ai_win_step_invalid
+                        lw $s6, SIZE
+                        bge $t8, $s6, ai_win_step_invalid
+                        bltz $t9, ai_win_step_invalid
+                        lw $s6, SIZE
+                        bge $t9, $s6, ai_win_step_invalid
+                        
+                        # Check cell content
+                        lw $s6, SIZE
+                        mul $s7, $t8, $s6
+                        add $s7, $s7, $t9
+                        sll $s7, $s7, 2
+                        lw $s6, board
+                        add $s7, $s6, $s7
+                        lw $s5, 0($s7)        # board[nx][ny]
+                        
+                        lw $s4, human_side
+                        andi $s4, $s4, 1
+                        addi $s4, $s4, 1	# AI stone
+                        beq $s5, $s4, ai_win_step_ai
+                        beqz $s5, ai_win_step_empty
+                        j ai_win_step_invalid  # Human stone or other
+                        
+                        ai_win_step_ai:
+                            addi $t4, $t4, 1
+                            j ai_win_step_next
+                        
+                        ai_win_step_empty:
+                            li $s4, -1
+                            beq $t5, $s4, ai_win_set_empty_1
+                            j ai_win_step_invalid
+                            
+                            ai_win_set_empty_1:
+                                move $t5, $t8
+                                move $t6, $t9
+                                j ai_win_step_next
+                        
+                        ai_win_step_invalid:
+                            li $t4, -1
+                            j ai_win_step_break
+                        
+                        ai_win_step_next:
+                            addi $t7, $t7, 1
+                            li $s6, 5
+                            blt $t7, $s6, ai_win_step_loop
+                    
+                    ai_win_step_break:
+                    # Check if we found a winning move (4 AI stones and 1 empty)
+                    li $s6, 4
+                    bne $t4, $s6, ai_win_no_win
+                    li $s6, -1
+                    beq $t5, $s6, ai_win_no_win
+                    
+                    # Found winning move
+                    la $a0, strP1
+        			li $v0, 4
+        			syscall
+                    move $v0, $t5
+                    move $v1, $t6
+                    j ai_move_done
+                    
+                    ai_win_no_win:
+                    addi $t3, $t3, 1
+                    li $s6, 1
+                    ble $t3, $s6, ai_win_offset_loop
+                
+                addi $t2, $t2, 1
+                li $s6, 7
+                ble $t2, $s6, ai_win_dir_loop
+            
+            addi $t1, $t1, 1
+            lw $s6, SIZE
+            blt $t1, $s6, ai_win_y_loop
+        
+        addi $t0, $t0, 1
+        lw $s6, SIZE
+        blt $t0, $s6, ai_win_x_loop
+    
+    # =============================================
+    # Priority 2: Block human's 4-in-a-row
+    # =============================================
+    li $t0, 0                  # x coordinate
+    ai_block4_x_loop:
+        li $t1, 0              # y coordinate
+        ai_block4_y_loop:
+            li $t2, 0          # direction (0-7)
+            ai_block4_dir_loop:
+                li $t3, 0      # offset (0-1)
+                ai_block4_offset_loop:
+                    li $t4, 0  # human stone count
+                    li $t5, -1 # empty x
+                    li $t6, -1 # empty y
+                    li $t7, 0  # step counter
+                    
+                    ai_block4_step_loop:
+                        # Calculate nx = x + (offset + step) * dx[dir]
+                        add $t8, $t3, $t7
+                        la $s6, ai_dir_dx
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dx[dir]
+                        mul $t8, $t8, $s7
+                        add $t8, $t0, $t8     # nx
+                        
+                        # Calculate ny = y + (offset + step) * dy[dir]
+                        add $t9, $t3, $t7
+                        la $s6, ai_dir_dy
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dy[dir]
+                        mul $t9, $t9, $s7
+                        add $t9, $t1, $t9     # ny
+                        
+                        # Check bounds
+                        bltz $t8, ai_block4_step_invalid
+                        lw $s6, SIZE
+                        bge $t8, $s6, ai_block4_step_invalid
+                        bltz $t9, ai_block4_step_invalid
+                        lw $s6, SIZE
+                        bge $t9, $s6, ai_block4_step_invalid
+                        
+                        # Check cell content
+                        lw $s6, SIZE
+                        mul $s7, $t8, $s6
+                        add $s7, $s7, $t9
+                        sll $s7, $s7, 2
+                        lw $s6, board
+                        add $s7, $s6, $s7
+                        lw $s5, 0($s7)        # board[nx][ny]
+                        
+                        lw $s4, human_side		# human stone
+                        beq $s5, $s4, ai_block4_step_human
+                        beqz $s5, ai_block4_step_empty
+                        j ai_block4_step_invalid  # AI stone or other
+                        
+                        ai_block4_step_human:
+                            addi $t4, $t4, 1
+                            j ai_block4_step_next
+                        
+                        ai_block4_step_empty:
+                            li $s4, -1
+                            beq $t5, $s4, ai_block4_set_empty_1
+                            j ai_block4_step_invalid
+                            
+                            ai_block4_set_empty_1:
+                                move $t5, $t8
+                                move $t6, $t9
+                                j ai_block4_step_next
+                        
+                        ai_block4_step_invalid:
+                            li $t4, -1
+                            j ai_block4_step_break
+                        
+                        ai_block4_step_next:
+                            addi $t7, $t7, 1
+                            li $s6, 5
+                            blt $t7, $s6, ai_block4_step_loop
+                    
+                    ai_block4_step_break:
+                    # Check if we found a blocking move (4 human stones and 1 empty)
+                    li $s6, 4
+                    bne $t4, $s6, ai_block4_no_block
+                    li $s6, -1
+                    beq $t5, $s6, ai_block4_no_block
+                    
+                    # Found blocking move
+                    la $a0, strP2
+        			li $v0, 4
+        			syscall
+                    move $v0, $t5
+                    move $v1, $t6
+                    j ai_move_done
+                    
+                    ai_block4_no_block:
+                    addi $t3, $t3, 1
+                    li $s6, 1
+                    ble $t3, $s6, ai_block4_offset_loop
+                
+                addi $t2, $t2, 1
+                li $s6, 7
+                ble $t2, $s6, ai_block4_dir_loop
+            
+            addi $t1, $t1, 1
+            lw $s6, SIZE
+            blt $t1, $s6, ai_block4_y_loop
+        
+        addi $t0, $t0, 1
+        lw $s6, SIZE
+        blt $t0, $s6, ai_block4_x_loop
+    
+    # =============================================
+    # Priority 3: Build 4 from AI's 3
+    # =============================================
+    li $t0, 0                  # x coordinate
+    ai_build4_x_loop:
+        li $t1, 0              # y coordinate
+        ai_build4_y_loop:
+            li $t2, 0          # direction (0-7)
+            ai_build4_dir_loop:
+                # First check if this direction is worth exploring
+                # by checking if there's potential for a meaningful line
+                li $t3, 0      # Check all 4 positions
+                li $s0, 1      # valid flag (1 = valid, 0 = invalid)
+                li $s1, 0      # AI stone count
+                li $s2, 0      # empty count
+                
+                ai_build4_dir_check:
+                    # Calculate nx = x + t3 * dx[dir]
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dx[dir]
+                    mul $t8, $t3, $s7
+                    add $t8, $t0, $t8     # nx
+                    
+                    # Calculate ny = y + t3 * dy[dir]
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dy[dir]
+                    mul $t9, $t3, $s7
+                    add $t9, $t1, $t9     # ny
+                    
+                    # Check bounds
+                    bltz $t8, ai_build4_dir_invalid
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_build4_dir_invalid
+                    bltz $t9, ai_build4_dir_invalid
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_build4_dir_invalid
+                    
+                    # Check cell content
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    
+                    lw $s4, human_side
+                    andi $s4, $s4, 1
+                    addi $s4, $s4, 1      # AI stone
+                    beq $s5, $s4, ai_build4_dir_ai
+                    lw $s4, human_side   # human stone
+                    beq $s5, $s4, ai_build4_dir_invalid
+                    # Else empty
+                    addi $s2, $s2, 1
+                    j ai_build4_dir_next
+                    
+                    ai_build4_dir_ai:
+                        addi $s1, $s1, 1
+                        j ai_build4_dir_next
+                    
+                    ai_build4_dir_invalid:
+                        li $s0, 0
+                        j ai_build4_dir_break
+                    
+                    ai_build4_dir_next:
+                        addi $t3, $t3, 1
+                        li $s6, 4
+                        blt $t3, $s6, ai_build4_dir_check
+                
+                ai_build4_dir_break:
+                # Skip this direction if not promising (has human stones or not enough AI stones)
+                beqz $s0, ai_build4_dir_skip
+                li $s6, 2
+                blt $s1, $s6, ai_build4_dir_skip  # Need at least 2 AI stones to consider
+                
+                # Now check for specific build patterns
+                li $t3, 0      # offset (0-2)
+                ai_build4_offset_loop:
+                    li $t4, 0  # AI stone count
+                    li $t5, -1 # empty x
+                    li $t6, -1 # empty y
+                    li $t7, 0  # step counter
+                    
+                    ai_build4_step_loop:
+                        # Calculate nx = x + (offset + step) * dx[dir]
+                        add $t8, $t3, $t7
+                        la $s6, ai_dir_dx
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dx[dir]
+                        mul $t8, $t8, $s7
+                        add $t8, $t0, $t8     # nx
+                        
+                        # Calculate ny = y + (offset + step) * dy[dir]
+                        add $t9, $t3, $t7
+                        la $s6, ai_dir_dy
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dy[dir]
+                        mul $t9, $t9, $s7
+                        add $t9, $t1, $t9     # ny
+                        
+                        # Check bounds
+                        bltz $t8, ai_build4_step_invalid
+                        lw $s6, SIZE
+                        bge $t8, $s6, ai_build4_step_invalid
+                        bltz $t9, ai_build4_step_invalid
+                        lw $s6, SIZE
+                        bge $t9, $s6, ai_build4_step_invalid
+                        
+                        # Check cell content
+                        lw $s6, SIZE
+                        mul $s7, $t8, $s6
+                        add $s7, $s7, $t9
+                        sll $s7, $s7, 2
+                        lw $s6, board
+                        add $s7, $s6, $s7
+                        lw $s5, 0($s7)        # board[nx][ny]
+                        
+                        lw $s4, human_side
+                        andi $s4, $s4, 1
+                        addi $s4, $s4, 1      # AI stone
+                        beq $s5, $s4, ai_build4_step_ai
+                        beqz $s5, ai_build4_step_empty
+                        j ai_build4_step_invalid  # Human stone or other
+                        
+                        ai_build4_step_ai:
+                            addi $t4, $t4, 1
+                            j ai_build4_step_next
+                        
+                        ai_build4_step_empty:
+                            li $s4, -1
+                            beq $t5, $s4, ai_build4_set_empty_1
+                            j ai_build4_step_invalid
+                            
+                            ai_build4_set_empty_1:
+                                move $t5, $t8
+                                move $t6, $t9
+                                j ai_build4_step_next
+                        
+                        ai_build4_step_invalid:
+                            li $t4, -1
+                            j ai_build4_step_break
+                        
+                        ai_build4_step_next:
+                            addi $t7, $t7, 1
+                            li $s6, 4
+                            blt $t7, $s6, ai_build4_step_loop
+                    
+                    ai_build4_step_break:
+                    # Check if we found a build move (3 AI stones and 1 empty)
+                    li $s6, 3
+                    bne $t4, $s6, ai_build4_no_build
+                    li $s6, -1
+                    beq $t5, $s6, ai_build4_no_build
+                    
+                    # ========================= Check meaningful =========================
+                    # Get dx, dy
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $t8, 0($s7)            # dx
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)            # dy
+                    
+                    # Check head (offset -1)
+                    addi $t9, $t3, -1
+                    li $s0, 0                 # head open flag
+                    
+                    # head_x = x + dx*(offset-1)
+                    mul $s1, $t9, $t8
+                    add $s1, $t0, $s1
+                    # head_y = y + dy*(offset-1)
+                    mul $s2, $t9, $t7
+                    add $s2, $t1, $s2
+                    
+                    # Check bounds
+                    bltz $s1, ai_build4_check_tail
+                    bltz $s2, ai_build4_check_tail
+                    lw $s6, SIZE
+                    bge $s1, $s6, ai_build4_check_tail
+                    bge $s2, $s6, ai_build4_check_tail
+                    
+                    # Check if head is empty
+                    lw $s6, SIZE
+                    mul $s7, $s1, $s6
+                    add $s7, $s7, $s2
+                    sll $s7, $s7, 2
+                    lw $s5, board
+                    add $s7, $s5, $s7
+                    lw $s4, 0($s7)
+                    bnez $s4, ai_build4_check_tail
+                    li $s0, 1                 # Head is open
+                    
+                    ai_build4_check_tail:
+                    # Check tail (offset +4)
+                    li $t9, 4
+                    add $t9, $t3, $t9
+                    
+                    # tail_x = x + dx*(offset+4)
+                    mul $s1, $t9, $t8
+                    add $s1, $t0, $s1
+                    # tail_y = y + dy*(offset+4)
+                    mul $s2, $t9, $t7
+                    add $s2, $t1, $s2
+                    
+                    # Check bounds
+                    bltz $s1, ai_build4_check_open
+                    bltz $s2, ai_build4_check_open
+                    lw $s6, SIZE
+                    bge $s1, $s6, ai_build4_check_open
+                    bge $s2, $s6, ai_build4_check_open
+                    
+                    # Check if tail is empty
+                    lw $s6, SIZE
+                    mul $s7, $s1, $s6
+                    add $s7, $s7, $s2
+                    sll $s7, $s7, 2
+                    lw $s5, board
+                    add $s7, $s5, $s7
+                    lw $s4, 0($s7)
+                    bnez $s4, ai_build4_check_open
+                    li $s0, 1                 # Tail is open
+                    
+                    ai_build4_check_open:
+                    # At least one end must be open
+                    beqz $s0, ai_build4_no_build
+                    
+                    # Found valid build move with at least one open end
+                    la $a0, strP3
+                    li $v0, 4
+                    syscall
+                    move $v0, $t5
+                    move $v1, $t6
+                    j ai_move_done
+                    
+                    ai_build4_no_build:
+                    addi $t3, $t3, 1
+                    li $s6, 2
+                    ble $t3, $s6, ai_build4_offset_loop
+                
+                ai_build4_dir_skip:
+                addi $t2, $t2, 1
+                li $s6, 7
+                ble $t2, $s6, ai_build4_dir_loop
+            
+            addi $t1, $t1, 1
+            lw $s6, SIZE
+            blt $t1, $s6, ai_build4_y_loop
+        
+        addi $t0, $t0, 1
+        lw $s6, SIZE
+        blt $t0, $s6, ai_build4_x_loop      
+    
+    # =============================================
+    # Priority 4: Block human's 3-in-a-row
+    # =============================================
+    li $t0, 0                  # x coordinate
+    ai_block3_x_loop:
+        li $t1, 0              # y coordinate
+        ai_block3_y_loop:
+            li $t2, 0          # direction (0-7)
+            ai_block3_dir_loop:
+                # First check if this direction is worth exploring for blocking
+                li $t3, 0      # Check all 4 positions
+                li $s0, 1      # valid flag (1 = valid, 0 = invalid)
+                li $s1, 0      # human stone count
+                li $s2, 0      # empty count
+                
+                ai_block3_dir_check:
+                    # Calculate nx = x + t3 * dx[dir]
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dx[dir]
+                    mul $t8, $t3, $s7
+                    add $t8, $t0, $t8     # nx
+                    
+                    # Calculate ny = y + t3 * dy[dir]
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dy[dir]
+                    mul $t9, $t3, $s7
+                    add $t9, $t1, $t9     # ny
+                    
+                    # Check bounds
+                    bltz $t8, ai_block3_dir_invalid
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_block3_dir_invalid
+                    bltz $t9, ai_block3_dir_invalid
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_block3_dir_invalid
+                    
+                    # Check cell content
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    
+                    lw $s4, human_side		# human stone
+                    beq $s5, $s4, ai_block3_dir_human
+                    lw $s4, human_side
+                    andi $s4, $s4, 1
+                    addi $s4, $s4, 1		# AI stone
+                    beq $s5, $s4, ai_block3_dir_invalid  # AI stone blocks
+                    # Else empty
+                    addi $s2, $s2, 1
+                    j ai_block3_dir_next
+                    
+                    ai_block3_dir_human:
+                        addi $s1, $s1, 1
+                        j ai_block3_dir_next
+                    
+                    ai_block3_dir_invalid:
+                        li $s0, 0
+                        j ai_block3_dir_break
+                    
+                    ai_block3_dir_next:
+                        addi $t3, $t3, 1
+                        li $s6, 4
+                        blt $t3, $s6, ai_block3_dir_check
+                
+                ai_block3_dir_break:
+                # Skip this direction if not promising (has AI stones or not enough human stones)
+                beqz $s0, ai_block3_dir_skip
+                li $s6, 2
+                blt $s1, $s6, ai_block3_dir_skip  # Need at least 2 human stones to consider
+                
+                # Now check for specific blocking patterns
+                li $t3, 0      # offset (0-2)
+                ai_block3_offset_loop:
+                    li $t4, 0  # human stone count
+                    li $t5, -1 # empty x
+                    li $t6, -1 # empty y
+                    li $t7, 0  # step counter
+                    
+                    ai_block3_step_loop:
+                        # Calculate nx = x + (offset + step) * dx[dir]
+                        add $t8, $t3, $t7
+                        la $s6, ai_dir_dx
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dx[dir]
+                        mul $t8, $t8, $s7
+                        add $t8, $t0, $t8     # nx
+                        
+                        # Calculate ny = y + (offset + step) * dy[dir]
+                        add $t9, $t3, $t7
+                        la $s6, ai_dir_dy
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dy[dir]
+                        mul $t9, $t9, $s7
+                        add $t9, $t1, $t9     # ny
+                        
+                        # Check bounds
+                        bltz $t8, ai_block3_step_invalid
+                        lw $s6, SIZE
+                        bge $t8, $s6, ai_block3_step_invalid
+                        bltz $t9, ai_block3_step_invalid
+                        lw $s6, SIZE
+                        bge $t9, $s6, ai_block3_step_invalid
+                        
+                        # Check cell content
+                        lw $s6, SIZE
+                        mul $s7, $t8, $s6
+                        add $s7, $s7, $t9
+                        sll $s7, $s7, 2
+                        lw $s6, board
+                        add $s7, $s6, $s7
+                        lw $s5, 0($s7)        # board[nx][ny]
+                        
+                        lw $s4, human_side		# human stone
+                        beq $s5, $s4, ai_block3_step_human
+                        beqz $s5, ai_block3_step_empty
+                        j ai_block3_step_invalid  # AI stone or other
+                        
+                        ai_block3_step_human:
+                            addi $t4, $t4, 1
+                            j ai_block3_step_next
+                        
+                        ai_block3_step_empty:
+                            li $s4, -1
+                            beq $t5, $s4, ai_block3_set_empty_1
+                            j ai_block3_step_invalid
+                            
+                            ai_block3_set_empty_1:
+                                move $t5, $t8
+                                move $t6, $t9
+                                j ai_block3_step_next
+                        
+                        ai_block3_step_invalid:
+                            li $t4, -1
+                            j ai_block3_step_break
+                        
+                        ai_block3_step_next:
+                            addi $t7, $t7, 1
+                            li $s6, 4
+                            blt $t7, $s6, ai_block3_step_loop
+                    
+                    ai_block3_step_break:
+                    # Check if we found a blocking move (3 human stones and 1 empty)
+                    li $s6, 3
+                    bne $t4, $s6, ai_block3_no_block
+                    li $s6, -1
+                    beq $t5, $s6, ai_block3_no_block
+                    
+    				# ========================= Check meaningful =========================
+                    # head = (x + dx*(offset-1), y + dy*(offset-1))
+                    addi $t9, $t3, -1
+                    
+                    # Get dx, dy
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $t8, 0($s7)            # dx
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)            # dy
+                    
+                    # head_x = x + dx*(offset-1)
+                    mul $s0, $t9, $t8
+                    add $s0, $t0, $s0
+                    # head_y = y + dy*(offset-1)
+                    mul $s1, $t9, $t7
+                    add $s1, $t1, $s1
+                    
+                    # tail = (x + dx*(offset+4), y + dy*(offset+4))
+                    li $s6, 4
+                    add $t9, $t3, $s6
+                    mul $s2, $t9, $t8
+                    add $s2, $t0, $s2
+                    mul $s3, $t9, $t7
+                    add $s3, $t1, $s3
+                    
+                    # Check bounds and board[head] == 0
+                    bltz $s0, ai_block3_no_block
+                    bltz $s1, ai_block3_no_block
+                    lw $s6, SIZE
+                    bge $s0, $s6, ai_block3_no_block
+                    bge $s1, $s6, ai_block3_no_block
+                    
+                    lw $s6, SIZE
+                    mul $s7, $s0, $s6
+                    add $s7, $s7, $s1
+                    sll $s7, $s7, 2
+                    lw $s5, board
+                    add $s7, $s5, $s7
+                    lw $s4, 0($s7)
+                    bnez $s4, ai_block3_no_block
+                    
+                    # Check bounds and board[tail] == 0
+                    bltz $s2, ai_block3_no_block
+                    bltz $s3, ai_block3_no_block
+                    lw $s6, SIZE
+                    bge $s2, $s6, ai_block3_no_block
+                    bge $s3, $s6, ai_block3_no_block
+                    
+                    lw $s6, SIZE
+                    mul $s7, $s2, $s6
+                    add $s7, $s7, $s3
+                    sll $s7, $s7, 2
+                    lw $s5, board
+                    add $s7, $s5, $s7
+                    lw $s4, 0($s7)
+                    bnez $s4, ai_block3_no_block
+                    
+                    # Both ends empty ? meaningful block
+                    la $a0, strP4
+                    li $v0, 4
+                    syscall
+                    move $v0, $t5
+                    move $v1, $t6
+                    j ai_move_done    
+
+                    ai_block3_no_block:
+                    addi $t3, $t3, 1
+                    li $s6, 2
+                    ble $t3, $s6, ai_block3_offset_loop
+                
+                ai_block3_dir_skip:
+                addi $t2, $t2, 1
+                li $s6, 7
+                ble $t2, $s6, ai_block3_dir_loop
+            
+            addi $t1, $t1, 1
+            lw $s6, SIZE
+            blt $t1, $s6, ai_block3_y_loop
+        
+        addi $t0, $t0, 1
+        lw $s6, SIZE
+        blt $t0, $s6, ai_block3_x_loop
+    
+	# =============================================
+    # Priority 5: Build at intersection of two AI potential lines
+    # =============================================
+    li $t0, 0                  # x coordinate
+    ai_dual_build_x_loop:
+        li $t1, 0              # y coordinate
+        ai_dual_build_y_loop:
+            # Check if this cell is empty
+            lw $s6, SIZE
+            mul $s7, $t0, $s6
+            add $s7, $s7, $t1
+            sll $s7, $s7, 2
+            lw $s6, board
+            add $s7, $s6, $s7
+            lw $s5, 0($s7)        # board[x][y]
+            bnez $s5, ai_dual_build_next_y  # Skip if not empty
+            
+            # Reset line count for this cell
+            li $s0, 0          # count of meaningful potential lines (need >= 1)
+            
+            # Check all pairs of directions
+            li $t2, 0          # first direction (0-7)
+            ai_dual_build_dir1_loop:
+                # Check if this empty cell is part of a potential AI line in dir1
+                # Check both sides of the empty cell with possible gaps
+                li $t5, 0      # max consecutive AI stones in dir1 (allowing gaps)
+                
+                # Check positive direction (allowing one gap)
+                li $t4, 0       # consecutive count
+                li $t6, 1       # step counter (1 to 3)
+                li $s3, 0       # gap count
+                ai_dual_build_check_dir1_pos:
+                    # Calculate nx = x + step * dx[dir1]
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dx[dir1]
+                    mul $t7, $t6, $s7
+                    add $t7, $t0, $t7     # nx
+                    
+                    # Calculate ny = y + step * dy[dir1]
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dy[dir1]
+                    mul $t8, $t6, $s7
+                    add $t8, $t1, $t8     # ny
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_build_dir1_pos_done
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_build_dir1_pos_done
+                    bltz $t8, ai_dual_build_dir1_pos_done
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_dir1_pos_done
+                    
+                    # Check cell content
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    
+                    lw $s4, human_side
+                    andi $s4, $s4, 1
+                    addi $s4, $s4, 1		# AI stone
+                    beq $s5, $s4, ai_dual_build_dir1_pos_ai
+                    
+                    # Not AI stone - check if we can allow a gap
+                    bnez $s5, ai_dual_build_dir1_pos_done  # opponent stone blocks
+                    addi $s3, $s3, 1      # increment gap count
+                    li $s4, 1
+                    ble $s3, $s4, ai_dual_build_dir1_pos_next  # allow max 1 gap
+                    j ai_dual_build_dir1_pos_done
+                    
+                    ai_dual_build_dir1_pos_ai:
+                    addi $t4, $t4, 1      # increment count
+                    
+                    ai_dual_build_dir1_pos_next:
+                    addi $t6, $t6, 1      # next step
+                    li $s6, 3
+                    ble $t6, $s6, ai_dual_build_check_dir1_pos
+                
+                ai_dual_build_dir1_pos_done:
+                move $t5, $t4            # initial max
+                
+                # Check negative direction (allowing one gap)
+                li $t4, 0       # consecutive count
+                li $t6, -1      # step counter (-1 to -3)
+                li $s3, 0       # gap count
+                ai_dual_build_check_dir1_neg:
+                    # Calculate nx = x + step * dx[dir1]
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dx[dir1]
+                    mul $t7, $t6, $s7
+                    add $t7, $t0, $t7     # nx
+                    
+                    # Calculate ny = y + step * dy[dir1]
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dy[dir1]
+                    mul $t8, $t6, $s7
+                    add $t8, $t1, $t8     # ny
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_build_dir1_neg_done
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_build_dir1_neg_done
+                    bltz $t8, ai_dual_build_dir1_neg_done
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_dir1_neg_done
+                    
+                    # Check cell content
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    
+                    lw $s4, human_side
+                    andi $s4, $s4, 1
+                    addi $s4, $s4, 1		# AI stone
+                    beq $s5, $s4, ai_dual_build_dir1_neg_ai
+                    
+                    # Not AI stone - check if we can allow a gap
+                    bnez $s5, ai_dual_build_dir1_neg_done  # opponent stone blocks
+                    addi $s3, $s3, 1      # increment gap count
+                    li $s4, 1
+                    ble $s3, $s4, ai_dual_build_dir1_neg_next  # allow max 1 gap
+                    j ai_dual_build_dir1_neg_done
+                    
+                    ai_dual_build_dir1_neg_ai:
+                    addi $t4, $t4, 1      # increment count
+                    
+                    ai_dual_build_dir1_neg_next:
+                    addi $t6, $t6, -1     # next step
+                    li $s6, -3
+                    bge $t6, $s6, ai_dual_build_check_dir1_neg
+                
+                ai_dual_build_dir1_neg_done:
+                # Add positive and negative counts if they form a line through the empty cell
+                add $t5, $t5, $t4
+                
+                # Need at least 2 consecutive AI stones in this direction (total both sides, with possible gap)
+                li $s6, 2
+                blt $t5, $s6, ai_dual_build_dir1_next
+                
+                # Now check other directions
+                li $t3, 0      # second direction (0-7)
+                ai_dual_build_dir2_loop:
+                    # Skip if same direction or opposite directions
+                    beq $t2, $t3, ai_dual_build_dir2_next
+                    
+                    # Skip if directions are opposite (wouldn't form a real intersection)
+                    # Directions are opposite if (dir1 + 4) mod 8 == dir2
+                    addi $t9, $t2, 4
+                    andi $t9, $t9, 7   # mod 8
+                    beq $t9, $t3, ai_dual_build_dir2_next
+                    
+                    # Check dir2 (with possible gaps)
+                    li $t5, 0      # max consecutive AI stones in dir2 (allowing gaps)
+                    
+                    # Check positive direction (allowing one gap)
+                    li $t4, 0       # consecutive count
+                    li $t6, 1       # step counter (1 to 3)
+                    li $s3, 0       # gap count
+                    ai_dual_build_check_dir2_pos:
+                        # Calculate nx = x + step * dx[dir2]
+                        la $s6, ai_dir_dx
+                        sll $s7, $t3, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dx[dir2]
+                        mul $t7, $t6, $s7
+                        add $t7, $t0, $t7     # nx
+                        
+                        # Calculate ny = y + step * dy[dir2]
+                        la $s6, ai_dir_dy
+                        sll $s7, $t3, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dy[dir2]
+                        mul $t8, $t6, $s7
+                        add $t8, $t1, $t8     # ny
+                        
+                        # Check bounds
+                        bltz $t7, ai_dual_build_dir2_pos_done
+                        lw $s6, SIZE
+                        bge $t7, $s6, ai_dual_build_dir2_pos_done
+                        bltz $t8, ai_dual_build_dir2_pos_done
+                        lw $s6, SIZE
+                        bge $t8, $s6, ai_dual_build_dir2_pos_done
+                        
+                        # Check cell content
+                        lw $s6, SIZE
+                        mul $s7, $t7, $s6
+                        add $s7, $s7, $t8
+                        sll $s7, $s7, 2
+                        lw $s6, board
+                        add $s7, $s6, $s7
+                        lw $s5, 0($s7)        # board[nx][ny]
+                        
+                        lw $s4, human_side
+                        andi $s4, $s4, 1
+                        addi $s4, $s4, 1		# AI stone
+                        beq $s5, $s4, ai_dual_build_dir2_pos_ai
+                        
+                        # Not AI stone - check if we can allow a gap
+                        bnez $s5, ai_dual_build_dir2_pos_done  # opponent stone blocks
+                        addi $s3, $s3, 1      # increment gap count
+                        li $s4, 1
+                        ble $s3, $s4, ai_dual_build_dir2_pos_next  # allow max 1 gap
+                        j ai_dual_build_dir2_pos_done
+                        
+                        ai_dual_build_dir2_pos_ai:
+                        addi $t4, $t4, 1      # increment count
+                        
+                        ai_dual_build_dir2_pos_next:
+                        addi $t6, $t6, 1      # next step
+                        li $s6, 3
+                        ble $t6, $s6, ai_dual_build_check_dir2_pos
+                    
+                    ai_dual_build_dir2_pos_done:
+                    move $t5, $t4            # initial max
+                    
+                    # Check negative direction (allowing one gap)
+                    li $t4, 0       # consecutive count
+                    li $t6, -1      # step counter (-1 to -3)
+                    li $s3, 0       # gap count
+                    ai_dual_build_check_dir2_neg:
+                        # Calculate nx = x + step * dx[dir2]
+                        la $s6, ai_dir_dx
+                        sll $s7, $t3, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dx[dir2]
+                        mul $t7, $t6, $s7
+                        add $t7, $t0, $t7     # nx
+                        
+                        # Calculate ny = y + step * dy[dir2]
+                        la $s6, ai_dir_dy
+                        sll $s7, $t3, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dy[dir2]
+                        mul $t8, $t6, $s7
+                        add $t8, $t1, $t8     # ny
+                        
+                        # Check bounds
+                        bltz $t7, ai_dual_build_dir2_neg_done
+                        lw $s6, SIZE
+                        bge $t7, $s6, ai_dual_build_dir2_neg_done
+                        bltz $t8, ai_dual_build_dir2_neg_done
+                        lw $s6, SIZE
+                        bge $t8, $s6, ai_dual_build_dir2_neg_done
+                        
+                        # Check cell content
+                        lw $s6, SIZE
+                        mul $s7, $t7, $s6
+                        add $s7, $s7, $t8
+                        sll $s7, $s7, 2
+                        lw $s6, board
+                        add $s7, $s6, $s7
+                        lw $s5, 0($s7)        # board[nx][ny]
+                        
+                        lw $s4, human_side
+                        andi $s4, $s4, 1
+                        addi $s4, $s4, 1		# AI stone
+                        beq $s5, $s4, ai_dual_build_dir2_neg_ai
+                        
+                        # Not AI stone - check if we can allow a gap
+                        bnez $s5, ai_dual_build_dir2_neg_done  # opponent stone blocks
+                        addi $s3, $s3, 1      # increment gap count
+                        li $s4, 1
+                        ble $s3, $s4, ai_dual_build_dir2_neg_next  # allow max 1 gap
+                        j ai_dual_build_dir2_neg_done
+                        
+                        ai_dual_build_dir2_neg_ai:
+                        addi $t4, $t4, 1      # increment count
+                        
+                        ai_dual_build_dir2_neg_next:
+                        addi $t6, $t6, -1     # next step
+                        li $s6, -3
+                        bge $t6, $s6, ai_dual_build_check_dir2_neg
+                    
+                    ai_dual_build_dir2_neg_done:
+                    # Add positive and negative counts if they form a line through the empty cell
+                    add $t5, $t5, $t4
+                    
+                    # Need at least 2 consecutive AI stones in this direction (total both sides, with possible gap)
+                    li $s6, 2
+                    blt $t5, $s6, ai_dual_build_dir2_next
+                    
+		            # ========================= Check meaningful =========================
+    		    	# We'll check three offset pairs: (-1,3), (-2,2), (-3,1)
+                    li $s1, 1      # meaningful flag for direction 1 (start as 1 = meaningful)
+                    
+                    # Get direction vectors
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s2, 0($s7)        # dx1
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s3, 0($s7)        # dy1                
+                    
+                    # Check offset pair (-1,3)
+                    li $s4, 0      # flag for this pair (0 = blocked, 1 = open)
+                    
+                    # Check -1 position
+                    li $a3, -1
+                    mul $t7, $a3, $s2
+                    add $t7, $t0, $t7     # nx = x + (-1)*dx1
+                    mul $t8, $a3, $s3
+                    add $t8, $t1, $t8     # ny = y + (-1)*dy1
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_build_check_pos3
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_build_check_pos3
+                    bltz $t8, ai_dual_build_check_pos3
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_check_pos3
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    beq $s5, $a3, ai_dual_build_check_pos3
+                    li $s4, 1             # -1 position is open
+                    
+                    ai_dual_build_check_pos3:
+                    # Check 3 position
+                    li $a3, 3
+                    mul $t7, $a3, $s2
+                    add $t7, $t0, $t7     # nx = x + 3*dx1
+                    mul $t8, $a3, $s3
+                    add $t8, $t1, $t8     # ny = y + 3*dy1
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_build_check_pair1
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_build_check_pair1
+                    bltz $t8, ai_dual_build_check_pair1
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_check_pair1
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    beq $s5, $a3, ai_dual_build_check_pair1
+                    li $s4, 1             # 3 position is open
+                    
+                    ai_dual_build_check_pair1:
+                    # If neither -1 nor 3 is open, this pair is blocked
+                    beqz $s4, ai_dual_build_dir1_not_meaningful
+                    
+                    # Check offset pair (-2,2)
+                    li $s4, 0      # flag for this pair
+                    
+                    # Check -2 position
+                    li $a3, -2
+                    mul $t7, $a3, $s2
+                    add $t7, $t0, $t7     # nx = x + (-2)*dx1
+                    mul $t8, $a3, $s3
+                    add $t8, $t1, $t8     # ny = y + (-2)*dy1
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_build_check_pos2
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_build_check_pos2
+                    bltz $t8, ai_dual_build_check_pos2
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_check_pos2
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    beq $s5, $a3, ai_dual_build_check_pos2
+                    li $s4, 1             # -2 position is open
+                    
+                    ai_dual_build_check_pos2:
+                    # Check 2 position
+                    li $a3, 2
+                    mul $t7, $a3, $s2
+                    add $t7, $t0, $t7     # nx = x + 2*dx1
+                    mul $t8, $a3, $s3
+                    add $t8, $t1, $t8     # ny = y + 2*dy1
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_build_check_pair2
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_build_check_pair2
+                    bltz $t8, ai_dual_build_check_pair2
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_check_pair2
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    beq $s5, $a3, ai_dual_build_check_pair2
+                    li $s4, 1             # 2 position is open
+                    
+                    ai_dual_build_check_pair2:
+                    # If neither -2 nor 2 is open, this pair is blocked
+                    beqz $s4, ai_dual_build_dir1_not_meaningful
+                    
+                    # Check offset pair (-3,1)
+                    li $s4, 0      # flag for this pair
+                    
+                    # Check -3 position
+                    li $a3, -3
+                    mul $t7, $a3, $s2
+                    add $t7, $t0, $t7     # nx = x + (-3)*dx1
+                    mul $t8, $a3, $s3
+                    add $t8, $t1, $t8     # ny = y + (-3)*dy1
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_build_check_pos1
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_build_check_pos1
+                    bltz $t8, ai_dual_build_check_pos1
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_check_pos1
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    beq $s5, $a3, ai_dual_build_check_pos1
+                    li $s4, 1             # -3 position is open
+                    
+                    ai_dual_build_check_pos1:
+                    # Check 1 position
+                    li $a3, 1
+                    mul $t7, $a3, $s2
+                    add $t7, $t0, $t7     # nx = x + 1*dx1
+                    mul $t8, $a3, $s3
+                    add $t8, $t1, $t8     # ny = y + 1*dy1
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_build_check_pair3
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_build_check_pair3
+                    bltz $t8, ai_dual_build_check_pair3
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_check_pair3
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    beq $s5, $a3, ai_dual_build_check_pair3
+                    li $s4, 1             # 1 position is open
+                    
+                    ai_dual_build_check_pair3:
+                    # If neither -3 nor 1 is open, this pair is blocked
+                    beqz $s4, ai_dual_build_dir1_not_meaningful
+                    
+                    # If we get here, all three pairs were meaningful
+                    j ai_dual_build_dir1_meaningful
+                    
+                    ai_dual_build_dir1_not_meaningful:
+                    # At least one pair was blocked, direction is not meaningful
+                    li $s1, 0
+                    j ai_check_build_dir2_meaningful
+                    
+                    ai_dual_build_dir1_meaningful:
+                    # Direction 1 is meaningful (all three offset pairs passed)
+                    li $s1, 1
+					
+					ai_check_build_dir2_meaningful:
+		    		# Now check if direction 2 is meaningful (all three offset pairs must pass)
+                    li $s5, 1      # meaningful flag for direction 2 (start as 1 = meaningful)
+                    
+                    # Get direction vectors
+                    la $s6, ai_dir_dx
+                    sll $s7, $t3, 2
+                    add $s7, $s6, $s7
+                    lw $s2, 0($s7)        # dx2
+                    la $s6, ai_dir_dy
+                    sll $s7, $t3, 2
+                    add $s7, $s6, $s7
+                    lw $s3, 0($s7)        # dy2
+                    
+                    # Check offset pair (-1,3) for dir2
+                    li $s4, 0      # flag for this pair
+                    
+                    # Check -1 position
+                    li $t7, -1
+                    mul $t8, $t7, $s2
+                    add $t8, $t0, $t8     # nx = x + (-1)*dx2
+                    mul $t9, $t7, $s3
+                    add $t9, $t1, $t9     # ny = y + (-1)*dy2
+                    
+                    # Check bounds
+                    bltz $t8, ai_dual_build_check_dir2_pos3
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_check_dir2_pos3
+                    bltz $t9, ai_dual_build_check_dir2_pos3
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_dual_build_check_dir2_pos3
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    beq $t7, $a3, ai_dual_build_check_dir2_pos3
+                    li $s4, 1             # -1 position is open
+                    
+                    ai_dual_build_check_dir2_pos3:
+                    # Check 3 position
+                    li $t7, 3
+                    mul $t8, $t7, $s2
+                    add $t8, $t0, $t8     # nx = x + 3*dx2
+                    mul $t9, $t7, $s3
+                    add $t9, $t1, $t9     # ny = y + 3*dy2
+                    
+                    # Check bounds
+                    bltz $t8, ai_dual_build_check_dir2_pair1
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_check_dir2_pair1
+                    bltz $t9, ai_dual_build_check_dir2_pair1
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_dual_build_check_dir2_pair1
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    beq $t7, $a3, ai_dual_build_check_dir2_pair1
+                    li $s4, 1             # 3 position is open
+                    
+                    ai_dual_build_check_dir2_pair1:
+                    # If neither -1 nor 3 is open, direction is not meaningful
+                    beqz $s4, ai_dual_build_dir2_not_meaningful
+                    
+                    # Check offset pair (-2,2) for dir2
+                    li $s4, 0      # flag for this pair
+                    
+                    # Check -2 position
+                    li $t7, -2
+                    mul $t8, $t7, $s2
+                    add $t8, $t0, $t8     # nx = x + (-2)*dx2
+                    mul $t9, $t7, $s3
+                    add $t9, $t1, $t9     # ny = y + (-2)*dy2
+                    
+                    # Check bounds
+                    bltz $t8, ai_dual_build_check_dir2_pos2
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_check_dir2_pos2
+                    bltz $t9, ai_dual_build_check_dir2_pos2
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_dual_build_check_dir2_pos2
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    beq $t7, $a3, ai_dual_build_check_dir2_pos2
+                    li $s4, 1             # -2 position is open
+                    
+                    ai_dual_build_check_dir2_pos2:
+                    # Check 2 position
+                    li $t7, 2
+                    mul $t8, $t7, $s2
+                    add $t8, $t0, $t8     # nx = x + 2*dx2
+                    mul $t9, $t7, $s3
+                    add $t9, $t1, $t9     # ny = y + 2*dy2
+                    
+                    # Check bounds
+                    bltz $t8, ai_dual_build_check_dir2_pair2
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_check_dir2_pair2
+                    bltz $t9, ai_dual_build_check_dir2_pair2
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_dual_build_check_dir2_pair2
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    beq $t7, $a3, ai_dual_build_check_dir2_pair2
+                    li $s4, 1             # 2 position is open
+                    
+                    ai_dual_build_check_dir2_pair2:
+                    # If neither -2 nor 2 is open, direction is not meaningful
+                    beqz $s4, ai_dual_build_dir2_not_meaningful
+                    
+                    # Check offset pair (-3,1) for dir2
+                    li $s4, 0      # flag for this pair
+                    
+                    # Check -3 position
+                    li $t7, -3
+                    mul $t8, $t7, $s2
+                    add $t8, $t0, $t8     # nx = x + (-3)*dx2
+                    mul $t9, $t7, $s3
+                    add $t9, $t1, $t9     # ny = y + (-3)*dy2
+                    
+                    # Check bounds
+                    bltz $t8, ai_dual_build_check_dir2_pos1
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_check_dir2_pos1
+                    bltz $t9, ai_dual_build_check_dir2_pos1
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_dual_build_check_dir2_pos1
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    beq $t7, $a3, ai_dual_build_check_dir2_pos1
+                    li $s4, 1             # -3 position is open
+                    
+                    ai_dual_build_check_dir2_pos1:
+                    # Check 1 position
+                    li $t7, 1
+                    mul $t8, $t7, $s2
+                    add $t8, $t0, $t8     # nx = x + 1*dx2
+                    mul $t9, $t7, $s3
+                    add $t9, $t1, $t9     # ny = y + 1*dy2
+                    
+                    # Check bounds
+                    bltz $t8, ai_dual_build_check_dir2_pair3
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_build_check_dir2_pair3
+                    bltz $t9, ai_dual_build_check_dir2_pair3
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_dual_build_check_dir2_pair3
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    beq $t7, $a3, ai_dual_build_check_dir2_pair3
+                    li $s4, 1             # 1 position is open
+                    
+                    ai_dual_build_check_dir2_pair3:
+                    # If neither -3 nor 1 is open, direction is not meaningful
+                    beqz $s4, ai_dual_build_dir2_not_meaningful
+                    
+                    # If we get here, all three pairs were meaningful for dir2
+                    j ai_dual_build_dir2_meaningful
+                    
+                	ai_dual_build_dir2_not_meaningful:
+                    # At least one pair was blocked, direction is not meaningful
+                    li $s5, 0
+                    
+                    ai_dual_build_dir2_meaningful:
+                    # Only need one meaningful direction to consider this intersection
+                    or $s7, $s1, $s5        # Check if either direction is meaningful
+                    beqz $s7, ai_dual_build_dir2_next  # Skip if neither is meaningful
+                    
+                    # Found at least one meaningful direction
+                    addi $s0, $s0, 1
+                    li $s6, 1
+                    bge $s0, $s6, ai_dual_build_found
+                    
+                    ai_dual_build_dir2_next:
+                    addi $t3, $t3, 1
+                    li $s6, 7
+                    ble $t3, $s6, ai_dual_build_dir2_loop
+                
+                ai_dual_build_dir1_next:
+                addi $t2, $t2, 1
+                li $s6, 7
+                ble $t2, $s6, ai_dual_build_dir1_loop
+            
+            ai_dual_build_found:
+            li $s6, 1
+            blt $s0, $s6, ai_dual_build_next_y
+            
+            # Found a critical intersection point to build
+            la $a0, strP5
+            li $v0, 4
+            syscall
+            move $v0, $t0
+            move $v1, $t1
+            j ai_move_done
+            
+            ai_dual_build_next_y:
+            addi $t1, $t1, 1
+            lw $s6, SIZE
+            blt $t1, $s6, ai_dual_build_y_loop
+        
+        addi $t0, $t0, 1
+        lw $s6, SIZE
+        blt $t0, $s6, ai_dual_build_x_loop
+        
+	# =============================================
+    # Priority 6: Block at intersection of two human potential lines
+    # =============================================
+    li $t0, 0                  # x coordinate
+    ai_dual_block_x_loop:
+        li $t1, 0              # y coordinate
+        ai_dual_block_y_loop:
+            # Check if this cell is empty
+            lw $s6, SIZE
+            mul $s7, $t0, $s6
+            add $s7, $s7, $t1
+            sll $s7, $s7, 2
+            lw $s6, board
+            add $s7, $s6, $s7
+            lw $s5, 0($s7)        # board[x][y]
+            bnez $s5, ai_dual_block_next_y  # Skip if not empty
+            
+            # Reset line count for this cell
+            li $s0, 0          # count of meaningful potential lines (need >= 1)
+            
+            # Check all pairs of directions
+            li $t2, 0          # first direction (0-7)
+            ai_dual_block_dir1_loop:
+                # Check if this empty cell is part of a potential line in dir1
+                # We'll look for human stones in this direction, allowing gaps
+                li $t5, 0      # human stone count in dir1 (both directions, max 4)
+                li $s2, 0      # meaningful flag for dir1 (0 = blocked, 1 = meaningful)
+                
+                # Check positive direction (1-3 steps)
+                li $t6, 1       # step counter (1 to 3)
+                ai_dual_block_check_dir1_pos:
+                    # Calculate nx = x + step * dx[dir1]
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dx[dir1]
+                    mul $t7, $t6, $s7
+                    add $t7, $t0, $t7     # nx
+                    
+                    # Calculate ny = y + step * dy[dir1]
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dy[dir1]
+                    mul $t8, $t6, $s7
+                    add $t8, $t1, $t8     # ny
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_block_dir1_pos_done
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_block_dir1_pos_done
+                    bltz $t8, ai_dual_block_dir1_pos_done
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_dir1_pos_done
+                    
+                    # Check cell content
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    
+                    lw $s4, human_side		# human stone
+                    bne $s5, $s4, ai_dual_block_dir1_pos_next  # Skip if not human stone
+                    addi $t5, $t5, 1      # increment human count
+                    
+                    ai_dual_block_dir1_pos_next:
+                    addi $t6, $t6, 1      # next step
+                    li $s6, 3
+                    ble $t6, $s6, ai_dual_block_check_dir1_pos
+                
+                ai_dual_block_dir1_pos_done:
+                
+                # Check negative direction (-1 to -3 steps)
+                li $t6, -1       # step counter (-1 to -3)
+                ai_dual_block_check_dir1_neg:
+                    # Calculate nx = x + step * dx[dir1]
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dx[dir1]
+                    mul $t7, $t6, $s7
+                    add $t7, $t0, $t7     # nx
+                    
+                    # Calculate ny = y + step * dy[dir1]
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dy[dir1]
+                    mul $t8, $t6, $s7
+                    add $t8, $t1, $t8     # ny
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_block_dir1_neg_done
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_block_dir1_neg_done
+                    bltz $t8, ai_dual_block_dir1_neg_done
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_dir1_neg_done
+                    
+                    # Check cell content
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    
+                    lw $s4, human_side		# human stone
+                    bne $s5, $s4, ai_dual_block_dir1_neg_next  # Skip if not human stone
+                    addi $t5, $t5, 1      # increment human count
+                    
+                    ai_dual_block_dir1_neg_next:
+                    addi $t6, $t6, -1     # next step
+                    li $s6, -3
+                    bge $t6, $s6, ai_dual_block_check_dir1_neg
+                
+                ai_dual_block_dir1_neg_done:
+                
+                # Need at least 2 human stones in this direction (not necessarily consecutive)
+                li $s6, 2
+                blt $t5, $s6, ai_dual_block_dir1_next
+                
+                # Now check other directions for potential intersections
+                li $t3, 0      # second direction
+                ai_dual_block_dir2_loop:
+                    # Skip if same direction
+                    beq $t2, $t3, ai_dual_block_dir2_next
+                    
+                    # Skip if directions are opposite (wouldn't be a real intersection)
+                    # Directions are opposite if (dir1 + 4) mod 8 == dir2
+                    addi $t9, $t2, 4
+                    andi $t9, $t9, 7   # mod 8
+                    beq $t9, $t3, ai_dual_block_dir2_next
+                    
+                    # Check dir2 (with positive and negative steps for human stones)
+                    li $t5, 0      # max consecutive human stones
+                    
+                    # Check positive direction
+                    li $t4, 0       # consecutive human stones
+                    li $t6, 1       # step count
+                    li $s3, 0       # gap count
+                    ai_dual_block_check_dir2_pos:
+                        # Calculate nx = x + step*dx
+                        la $s6, ai_dir_dx
+                        sll $s7, $t3, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)    # dx
+                        mul $t7, $t6, $s7
+                        add $t7, $t0, $t7 # nx = x + step*dx
+                        
+                        # Calculate ny = y + step*dy
+                        la $s6, ai_dir_dy
+                        sll $s7, $t3, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)    # dy
+                        mul $t8, $t6, $s7
+                        add $t8, $t1, $t8 # ny = y + step*dy
+                        
+                        # Check bounds
+                        bltz $t7, ai_dual_block_dir2_pos_done
+                        lw $s6, SIZE
+                        bge $t7, $s6, ai_dual_block_dir2_pos_done
+                        bltz $t8, ai_dual_block_dir2_pos_done
+                        lw $s6, SIZE
+                        bge $t8, $s6, ai_dual_block_dir2_pos_done
+                        
+                        # Check cell content (looking for human stones)
+                        lw $s6, SIZE
+                        mul $s7, $t7, $s6
+                        add $s7, $s7, $t8
+                        sll $s7, $s7, 2
+                        lw $s6, board
+                        add $s7, $s6, $s7
+                        lw $s5, 0($s7)    # board[nx][ny]
+                        
+                        lw $s4, human_side # human stone value
+                        beq $s5, $s4, ai_dual_block_dir2_pos_match
+                        
+                        # Not human stone - check if empty with gap
+                        bnez $s5, ai_dual_block_dir2_pos_done
+                        addi $s3, $s3, 1  # increment gap count
+                        li $s4, 1
+                        ble $s3, $s4, ai_dual_block_dir2_pos_continue
+                        j ai_dual_block_dir2_pos_done
+                        
+                        ai_dual_block_dir2_pos_match:
+                        addi $t4, $t4, 1  # increment consecutive count
+                        
+                        ai_dual_block_dir2_pos_continue:
+                        addi $t6, $t6, 1  # increment step
+                        li $s6, 3
+                        ble $t6, $s6, ai_dual_block_check_dir2_pos
+                    
+                    ai_dual_block_dir2_pos_done:
+                    move $t5, $t4         # store positive direction count
+                    
+                    # Check negative direction
+                    li $t4, 0       # consecutive human stones
+                    li $t6, -1      # step count
+                    li $s3, 0       # gap count
+                    ai_dual_block_check_dir2_neg:
+                        # Calculate nx = x + step*dx
+                        la $s6, ai_dir_dx
+                        sll $s7, $t3, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)    # dx
+                        mul $t7, $t6, $s7
+                        add $t7, $t0, $t7 # nx = x + step*dx
+                        
+                        # Calculate ny = y + step*dy
+                        la $s6, ai_dir_dy
+                        sll $s7, $t3, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)    # dy
+                        mul $t8, $t6, $s7
+                        add $t8, $t1, $t8 # ny = y + step*dy
+                        
+                        # Check bounds
+                        bltz $t7, ai_dual_block_dir2_neg_done
+                        lw $s6, SIZE
+                        bge $t7, $s6, ai_dual_block_dir2_neg_done
+                        bltz $t8, ai_dual_block_dir2_neg_done
+                        lw $s6, SIZE
+                        bge $t8, $s6, ai_dual_block_dir2_neg_done
+                        
+                        # Check cell content (looking for human stones)
+                        lw $s6, SIZE
+                        mul $s7, $t7, $s6
+                        add $s7, $s7, $t8
+                        sll $s7, $s7, 2
+                        lw $s6, board
+                        add $s7, $s6, $s7
+                        lw $s5, 0($s7)    # board[nx][ny]
+                        
+                        lw $s4, human_side # human stone value
+                        beq $s5, $s4, ai_dual_block_dir2_neg_match
+                        
+                        # Not human stone - check if empty with gap
+                        bnez $s5, ai_dual_block_dir2_neg_done
+                        addi $s3, $s3, 1  # increment gap count
+                        li $s4, 1
+                        ble $s3, $s4, ai_dual_block_dir2_neg_continue
+                        j ai_dual_block_dir2_neg_done
+                        
+                        ai_dual_block_dir2_neg_match:
+                        addi $t4, $t4, 1  # increment consecutive count
+                        
+                        ai_dual_block_dir2_neg_continue:
+                        addi $t6, $t6, -1 # decrement step
+                        li $s6, -3
+                        bge $t6, $s6, ai_dual_block_check_dir2_neg
+                    
+                    ai_dual_block_dir2_neg_done:
+                    # Add positive and negative counts
+                    add $t5, $t5, $t4
+                    
+                    # Need at least 2 consecutive human stones to consider
+                    li $s6, 2
+                    blt $t5, $s6, ai_dual_block_dir2_next
+    
+    				# ========================= Check meaningful =========================
+                    # We'll check three offset pairs (-1,3), (-2,2), (-3,1)
+                    li $s1, 1      # meaningful flag (1 = meaningful)
+                    
+                    # Get direction vectors
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s2, 0($s7)        # dx
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s3, 0($s7)        # dy
+                    
+                    # Check offset pair (-1,3)
+                    li $s4, 0      # flag for this pair being blocked
+                    
+                    # Check -1 position
+                    li $a3, -1
+                    mul $t7, $a3, $s2
+                    add $t7, $t0, $t7     # nx = x + (-1)*dx
+                    mul $t8, $a3, $s3
+                    add $t8, $t1, $t8     # ny = y + (-1)*dy
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_block_check_pos3
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_block_check_pos3
+                    bltz $t8, ai_dual_block_check_pos3
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_check_pos3
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    andi $a3, $a3, 1
+                    addi $a3, $a3, 1
+                    beq $s5, $a3, ai_dual_block_check_pos3
+                    li $s4, 1             # -1 position is empty
+                    
+                    ai_dual_block_check_pos3:
+                    # Check 3 position
+                    li $a3, 3
+                    mul $t7, $a3, $s2
+                    add $t7, $t0, $t7     # nx = x + 3*dx
+                    mul $t8, $a3, $s3
+                    add $t8, $t1, $t8     # ny = y + 3*dy
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_block_check_pair1
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_block_check_pair1
+                    bltz $t8, ai_dual_block_check_pair1
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_check_pair1
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    andi $a3, $a3, 1
+                    addi $a3, $a3, 1
+                    beq $s5, $a3, ai_dual_block_check_pair1
+                    li $s4, 1             # 3 position is empty
+                    
+                    ai_dual_block_check_pair1:
+                    # If neither -1 nor 3 is open, this pair is blocked
+                    beqz $s4, ai_dual_block_dir1_not_meaningful
+                    
+                    # Check offset pair (-2,2)
+                    li $s4, 0      # flag for this pair being blocked
+                    
+                    # Check -2 position
+                    li $a3, -2
+                    mul $t7, $a3, $s2
+                    add $t7, $t0, $t7     # nx = x + (-2)*dx
+                    mul $t8, $a3, $s3
+                    add $t8, $t1, $t8     # ny = y + (-2)*dy
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_block_check_pos2
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_block_check_pos2
+                    bltz $t8, ai_dual_block_check_pos2
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_check_pos2
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    andi $a3, $a3, 1
+                    addi $a3, $a3, 1
+                    beq $s5, $a3, ai_dual_block_check_pos2
+                    li $s4, 1             # -2 position is empty
+                    
+                    ai_dual_block_check_pos2:
+                    # Check 2 position
+                    li $a3, 2
+                    mul $t7, $a3, $s2
+                    add $t7, $t0, $t7     # nx = x + 2*dx
+                    mul $t8, $a3, $s3
+                    add $t8, $t1, $t8     # ny = y + 2*dy
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_block_check_pair2
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_block_check_pair2
+                    bltz $t8, ai_dual_block_check_pair2
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_check_pair2
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    andi $a3, $a3, 1
+                    addi $a3, $a3, 1
+                    beq $s5, $a3, ai_dual_block_check_pair2
+                    li $s4, 1             # 2 position is empty
+                    
+                    ai_dual_block_check_pair2:
+                    # If neither -2 nor 2 is open, this pair is blocked
+                    beqz $s4, ai_dual_block_dir1_not_meaningful
+                    
+                    # Check offset pair (-3,1)
+                    li $s4, 0      # flag for this pair being blocked
+                    
+                    # Check -3 position
+                    li $a3, -3
+                    mul $t7, $a3, $s2
+                    add $t7, $t0, $t7     # nx = x + (-3)*dx
+                    mul $t8, $a3, $s3
+                    add $t8, $t1, $t8     # ny = y + (-3)*dy
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_block_check_pos1
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_block_check_pos1
+                    bltz $t8, ai_dual_block_check_pos1
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_check_pos1
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    andi $a3, $a3, 1
+                    addi $a3, $a3, 1
+                    beq $s5, $a3, ai_dual_block_check_pos1
+                    li $s4, 1             # -3 position is empty
+                    
+                    ai_dual_block_check_pos1:
+                    # Check 1 position
+                    li $a3, 1
+                    mul $t7, $a3, $s2
+                    add $t7, $t0, $t7     # nx = x + 1*dx
+                    mul $t8, $a3, $s3
+                    add $t8, $t1, $t8     # ny = y + 1*dy
+                    
+                    # Check bounds
+                    bltz $t7, ai_dual_block_check_pair3
+                    lw $s6, SIZE
+                    bge $t7, $s6, ai_dual_block_check_pair3
+                    bltz $t8, ai_dual_block_check_pair3
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_check_pair3
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t7, $s6
+                    add $s7, $s7, $t8
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    andi $a3, $a3, 1
+                    addi $a3, $a3, 1
+                    beq $s5, $a3, ai_dual_block_check_pair3
+                    li $s4, 1             # 1 position is empty
+                    
+                    ai_dual_block_check_pair3:
+                    # If neither -3 nor 1 is open, this pair is blocked
+                    beqz $s4, ai_dual_block_dir1_not_meaningful
+                    
+                    # If we get here, all three pairs have at least one open position
+                    j ai_dual_block_dir1_meaningful
+                    
+                    ai_dual_block_dir1_not_meaningful:
+                    # At least one pair was blocked, so direction is not meaningful
+                    li $s1, 0
+                    j ai_check_block_dir2_meaningful
+                                    
+                    ai_dual_block_dir1_meaningful:
+                    # Direction 1 is meaningful (has potential)
+                    li $s1, 1
+					
+					ai_check_block_dir2_meaningful:
+                    # Now check if direction 2 is meaningful (has potential)
+                    li $s5, 1      # meaningful flag (1 = meaningful)
+                    
+                    # Get direction vectors
+                    la $s6, ai_dir_dx
+                    sll $s7, $t3, 2
+                    add $s7, $s6, $s7
+                    lw $s2, 0($s7)        # dx
+                    la $s6, ai_dir_dy
+                    sll $s7, $t3, 2
+                    add $s7, $s6, $s7
+                    lw $s3, 0($s7)        # dy
+                    
+                    # Check offset pair (-1,3)
+                    li $s4, 0      # flag for this pair being blocked
+                    
+                    # Check -1 position
+                    li $t7, -1
+                    mul $t8, $t7, $s2
+                    add $t8, $t0, $t8     # nx = x + (-1)*dx
+                    mul $t9, $t7, $s3
+                    add $t9, $t1, $t9     # ny = y + (-1)*dy
+                    
+                    # Check bounds
+                    bltz $t8, ai_dual_block_check_dir2_pos3
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_check_dir2_pos3
+                    bltz $t9, ai_dual_block_check_dir2_pos3
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_dual_block_check_dir2_pos3
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    andi $a3, $a3, 1
+                    addi $a3, $a3, 1
+                    beq $t7, $a3, ai_dual_block_check_dir2_pos3
+                    li $s4, 1             # -1 position is empty
+                    
+                    ai_dual_block_check_dir2_pos3:
+                    # Check 3 position
+                    li $t7, 3
+                    mul $t8, $t7, $s2
+                    add $t8, $t0, $t8     # nx = x + 3*dx
+                    mul $t9, $t7, $s3
+                    add $t9, $t1, $t9     # ny = y + 3*dy
+                    
+                    # Check bounds
+                    bltz $t8, ai_dual_block_check_dir2_pair1
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_check_dir2_pair1
+                    bltz $t9, ai_dual_block_check_dir2_pair1
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_dual_block_check_dir2_pair1
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    andi $a3, $a3, 1
+                    addi $a3, $a3, 1
+                    beq $t7, $a3, ai_dual_block_check_dir2_pair1
+                    li $s4, 1             # 3 position is empty
+                    
+                    ai_dual_block_check_dir2_pair1:
+                    # If neither -1 nor 3 is open, this pair is blocked
+                    beqz $s4, ai_dual_block_dir2_not_meaningful
+                    
+                    # Check offset pair (-2,2)
+                    li $s4, 0      # flag for this pair being blocked
+                    
+                    # Check -2 position
+                    li $t7, -2
+                    mul $t8, $t7, $s2
+                    add $t8, $t0, $t8     # nx = x + (-2)*dx
+                    mul $t9, $t7, $s3
+                    add $t9, $t1, $t9     # ny = y + (-2)*dy
+                    
+                    # Check bounds
+                    bltz $t8, ai_dual_block_check_dir2_pos2
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_check_dir2_pos2
+                    bltz $t9, ai_dual_block_check_dir2_pos2
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_dual_block_check_dir2_pos2
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    andi $a3, $a3, 1
+                    addi $a3, $a3, 1
+                    beq $t7, $a3, ai_dual_block_check_dir2_pos2
+                    li $s4, 1             # -2 position is empty
+                    
+                    ai_dual_block_check_dir2_pos2:
+                    # Check 2 position
+                    li $t7, 2
+                    mul $t8, $t7, $s2
+                    add $t8, $t0, $t8     # nx = x + 2*dx
+                    mul $t9, $t7, $s3
+                    add $t9, $t1, $t9     # ny = y + 2*dy
+                    
+                    # Check bounds
+                    bltz $t8, ai_dual_block_check_dir2_pair2
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_check_dir2_pair2
+                    bltz $t9, ai_dual_block_check_dir2_pair2
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_dual_block_check_dir2_pair2
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    andi $a3, $a3, 1
+                    addi $a3, $a3, 1
+                    beq $t7, $a3, ai_dual_block_check_dir2_pair2
+                    li $s4, 1             # 2 position is empty
+                    
+                    ai_dual_block_check_dir2_pair2:
+                    # If neither -2 nor 2 is open, this pair is blocked
+                    beqz $s4, ai_dual_block_dir2_not_meaningful
+                    
+                    # Check offset pair (-3,1)
+                    li $s4, 0      # flag for this pair being blocked
+                    
+                    # Check -3 position
+                    li $t7, -3
+                    mul $t8, $t7, $s2
+                    add $t8, $t0, $t8     # nx = x + (-3)*dx
+                    mul $t9, $t7, $s3
+                    add $t9, $t1, $t9     # ny = y + (-3)*dy
+                    
+                    # Check bounds
+                    bltz $t8, ai_dual_block_check_dir2_pos1
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_check_dir2_pos1
+                    bltz $t9, ai_dual_block_check_dir2_pos1
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_dual_block_check_dir2_pos1
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    andi $a3, $a3, 1
+                    addi $a3, $a3, 1
+                    beq $t7, $a3, ai_dual_block_check_dir2_pos1
+                    li $s4, 1             # -3 position is empty
+                    
+                    ai_dual_block_check_dir2_pos1:
+                    # Check 1 position
+                    li $t7, 1
+                    mul $t8, $t7, $s2
+                    add $t8, $t0, $t8     # nx = x + 1*dx
+                    mul $t9, $t7, $s3
+                    add $t9, $t1, $t9     # ny = y + 1*dy
+                    
+                    # Check bounds
+                    bltz $t8, ai_dual_block_check_dir2_pair3
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_dual_block_check_dir2_pair3
+                    bltz $t9, ai_dual_block_check_dir2_pair3
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_dual_block_check_dir2_pair3
+                    
+                    # Check if position is empty
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)        # board[nx][ny]
+                    lw $a3, human_side
+                    andi $a3, $a3, 1
+                    addi $a3, $a3, 1
+                    beq $t7, $a3, ai_dual_block_check_dir2_pair3
+                    li $s4, 1             # 1 position is empty
+                    
+                    ai_dual_block_check_dir2_pair3:
+                    # If neither -3 nor 1 is open, this pair is blocked
+                    beqz $s4, ai_dual_block_dir2_not_meaningful
+                    
+                    # If we get here, all three pairs have at least one open position
+                    j ai_dual_block_dir2_meaningful
+                    
+                    ai_dual_block_dir2_not_meaningful:
+                    # At least one pair was blocked, so direction is not meaningful
+                    li $s5, 0
+                    
+                    ai_dual_block_dir2_meaningful:
+                    # Only need one meaningful direction to make this a good blocking move
+                    or $s7, $s1, $s5      # combine meaningful flags
+                    beqz $s7, ai_dual_block_dir2_next
+                    
+                    # Found at least one meaningful direction pair
+                    addi $s0, $s0, 1
+                    li $s6, 1
+                    bge $s0, $s6, ai_dual_block_found
+                                        
+                    ai_dual_block_dir2_next:
+                    addi $t3, $t3, 1
+                    li $s6, 7
+                    ble $t3, $s6, ai_dual_block_dir2_loop
+                
+                ai_dual_block_dir1_next:
+                addi $t2, $t2, 1
+                li $s6, 7
+                ble $t2, $s6, ai_dual_block_dir1_loop
+
+            ai_dual_block_found:
+            li $s6, 1
+            blt $s0, $s6, ai_dual_block_next_y
+            
+            # Found a critical intersection to block human potential
+            la $a0, strP6
+            li $v0, 4
+            syscall
+            move $v0, $t0
+            move $v1, $t1
+            j ai_move_done
+            
+            ai_dual_block_next_y:
+            addi $t1, $t1, 1
+            lw $s6, SIZE
+            blt $t1, $s6, ai_dual_block_y_loop
+        
+        addi $t0, $t0, 1
+        lw $s6, SIZE
+        blt $t0, $s6, ai_dual_block_x_loop
+        
+    # =============================================
+    # Priority 7: Build 3 from AI's 2
+    # =============================================
+    li $t0, 0                  # x coordinate
+    ai_build3_x_loop:
+        li $t1, 0              # y coordinate
+        ai_build3_y_loop:
+            li $t2, 0          # direction (0-7)
+            ai_build3_dir_loop:
+                # First check if this direction is worth exploring
+                li $t3, 0      # Check all 3 positions
+                li $s0, 1      # valid flag (1 = valid, 0 = invalid)
+                li $s1, 0      # AI stone count
+                li $s2, 0      # empty count
+                
+                ai_build3_dir_check:
+                    # Calculate nx = x + t3 * dx[dir]
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dx[dir]
+                    mul $t8, $t3, $s7
+                    add $t8, $t0, $t8     # nx
+                    
+                    # Calculate ny = y + t3 * dy[dir]
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dy[dir]
+                    mul $t9, $t3, $s7
+                    add $t9, $t1, $t9     # ny
+                    
+                    # Check bounds
+                    bltz $t8, ai_build3_dir_invalid
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_build3_dir_invalid
+                    bltz $t9, ai_build3_dir_invalid
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_build3_dir_invalid
+                    
+                    # Check cell content
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    
+                    lw $s4, human_side
+                    andi $s4, $s4, 1
+                    addi $s4, $s4, 1      # AI stone
+                    beq $s5, $s4, ai_build3_dir_ai
+                    lw $s4, human_side    # human stone
+                    beq $s5, $s4, ai_build3_dir_invalid
+                    # Else empty
+                    addi $s2, $s2, 1
+                    j ai_build3_dir_next
+                    
+                    ai_build3_dir_ai:
+                        addi $s1, $s1, 1
+                        j ai_build3_dir_next
+                    
+                    ai_build3_dir_invalid:
+                        li $s0, 0
+                        j ai_build3_dir_break
+                    
+                    ai_build3_dir_next:
+                        addi $t3, $t3, 1
+                        li $s6, 3
+                        blt $t3, $s6, ai_build3_dir_check
+                
+                ai_build3_dir_break:
+                # Skip this direction if not promising (has human stones or not enough AI stones)
+                beqz $s0, ai_build3_dir_skip
+                li $s6, 1
+                blt $s1, $s6, ai_build3_dir_skip  # Need at least 1 AI stone to consider
+                
+                # Now check for specific build patterns
+                li $t3, 0      # offset (0-2)
+                ai_build3_offset_loop:
+                    li $t4, 0  # AI stone count
+                    li $t5, -1 # empty x
+                    li $t6, -1 # empty y
+                    li $t7, 0  # step counter
+                    
+                    ai_build3_step_loop:
+                        # Calculate nx = x + (offset + step) * dx[dir]
+                        add $t8, $t3, $t7
+                        la $s6, ai_dir_dx
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dx[dir]
+                        mul $t8, $t8, $s7
+                        add $t8, $t0, $t8     # nx
+                        
+                        # Calculate ny = y + (offset + step) * dy[dir]
+                        add $t9, $t3, $t7
+                        la $s6, ai_dir_dy
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dy[dir]
+                        mul $t9, $t9, $s7
+                        add $t9, $t1, $t9     # ny
+                        
+                        # Check bounds
+                        bltz $t8, ai_build3_step_invalid
+                        lw $s6, SIZE
+                        bge $t8, $s6, ai_build3_step_invalid
+                        bltz $t9, ai_build3_step_invalid
+                        lw $s6, SIZE
+                        bge $t9, $s6, ai_build3_step_invalid
+                        
+                        # Check cell content
+                        lw $s6, SIZE
+                        mul $s7, $t8, $s6
+                        add $s7, $s7, $t9
+                        sll $s7, $s7, 2
+                        lw $s6, board
+                        add $s7, $s6, $s7
+                        lw $s5, 0($s7)        # board[nx][ny]
+                        
+                        lw $s4, human_side
+                        andi $s4, $s4, 1
+                        addi $s4, $s4, 1      # AI stone
+                        beq $s5, $s4, ai_build3_step_ai
+                        beqz $s5, ai_build3_step_empty
+                        j ai_build3_step_invalid  # Human stone or other
+                        
+                        ai_build3_step_ai:
+                            addi $t4, $t4, 1
+                            j ai_build3_step_next
+                        
+                        ai_build3_step_empty:
+                            li $s4, -1
+                            beq $t5, $s4, ai_build3_set_empty_1
+                            j ai_build3_step_invalid
+                            
+                            ai_build3_set_empty_1:
+                                move $t5, $t8
+                                move $t6, $t9
+                                j ai_build3_step_next
+                        
+                        ai_build3_step_invalid:
+                            li $t4, -1
+                            j ai_build3_step_break
+                        
+                        ai_build3_step_next:
+                            addi $t7, $t7, 1
+                            li $s6, 3
+                            blt $t7, $s6, ai_build3_step_loop
+                    
+                    ai_build3_step_break:
+                    # Check if we found a build move (2 AI stones and 1 empty)
+                    li $s6, 2
+                    bne $t4, $s6, ai_build3_no_build
+                    li $s6, -1
+                    beq $t5, $s6, ai_build3_no_build
+
+    				# ========================= Check meaningful =========================
+                    # Get dx, dy for direction checks
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $t8, 0($s7)            # dx
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)            # dy
+                    
+                    # Check head (offset -1)
+                    addi $t9, $t3, -1
+                    li $s0, 0                 # head open flag
+                    
+                    # head_x = x + dx*(offset-1)
+                    mul $s1, $t9, $t8
+                    add $s1, $t0, $s1
+                    # head_y = y + dy*(offset-1)
+                    mul $s2, $t9, $t7
+                    add $s2, $t1, $s2
+                    
+                    # Check bounds
+                    bltz $s1, ai_build3_check_tail
+                    bltz $s2, ai_build3_check_tail
+                    lw $s6, SIZE
+                    bge $s1, $s6, ai_build3_check_tail
+                    bge $s2, $s6, ai_build3_check_tail
+                    
+                    # Check if head is empty
+                    lw $s6, SIZE
+                    mul $s7, $s1, $s6
+                    add $s7, $s7, $s2
+                    sll $s7, $s7, 2
+                    lw $s5, board
+                    add $s7, $s5, $s7
+                    lw $s4, 0($s7)
+                    bnez $s4, ai_build3_check_tail
+                    li $s0, 1                 # Head is open
+                    
+                    ai_build3_check_tail:
+                    # Check tail (offset +3)
+                    li $t9, 3
+                    add $t9, $t3, $t9
+                    
+                    # tail_x = x + dx*(offset+3)
+                    mul $s1, $t9, $t8
+                    add $s1, $t0, $s1
+                    # tail_y = y + dy*(offset+3)
+                    mul $s2, $t9, $t7
+                    add $s2, $t1, $s2
+                    
+                    # Check bounds
+                    bltz $s1, ai_build3_check_open
+                    bltz $s2, ai_build3_check_open
+                    lw $s6, SIZE
+                    bge $s1, $s6, ai_build3_check_open
+                    bge $s2, $s6, ai_build3_check_open
+                    
+                    # Check if tail is empty
+                    lw $s6, SIZE
+                    mul $s7, $s1, $s6
+                    add $s7, $s7, $s2
+                    sll $s7, $s7, 2
+                    lw $s5, board
+                    add $s7, $s5, $s7
+                    lw $s4, 0($s7)
+                    bnez $s4, ai_build3_check_open
+                    li $s0, 1                 # Tail is open
+                    
+                    ai_build3_check_open:
+                    # At least one end must be open
+                    beqz $s0, ai_build3_no_build
+                    
+                    # Found valid build move with at least one open end
+                    la $a0, strP7
+                    li $v0, 4
+                    syscall
+                    move $v0, $t5
+                    move $v1, $t6
+                    j ai_move_done
+                    
+                    ai_build3_no_build:
+                    addi $t3, $t3, 1
+                    li $s6, 2
+                    ble $t3, $s6, ai_build3_offset_loop
+                
+                ai_build3_dir_skip:
+                addi $t2, $t2, 1
+                li $s6, 7
+                ble $t2, $s6, ai_build3_dir_loop
+            
+            addi $t1, $t1, 1
+            lw $s6, SIZE
+            blt $t1, $s6, ai_build3_y_loop
+        
+        addi $t0, $t0, 1
+        lw $s6, SIZE
+        blt $t0, $s6, ai_build3_x_loop
+
+	# =============================================
+    # Priority 8: Block human's 2-in-a-row
+    # =============================================
+    li $t0, 0                  # x coordinate
+    ai_block2_x_loop:
+        li $t1, 0              # y coordinate
+        ai_block2_y_loop:
+            li $t2, 0          # direction (0-7)
+            ai_block2_dir_loop:
+                # First check if this direction is worth exploring for blocking
+                li $t3, 0      # Check all 3 positions
+                li $s0, 1      # valid flag (1 = valid, 0 = invalid)
+                li $s1, 0      # human stone count
+                li $s2, 0      # empty count
+                
+                ai_block2_dir_check:
+                    # Calculate nx = x + t3 * dx[dir]
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dx[dir]
+                    mul $t8, $t3, $s7
+                    add $t8, $t0, $t8     # nx
+                    
+                    # Calculate ny = y + t3 * dy[dir]
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dy[dir]
+                    mul $t9, $t3, $s7
+                    add $t9, $t1, $t9     # ny
+                    
+                    # Check bounds
+                    bltz $t8, ai_block2_dir_invalid
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_block2_dir_invalid
+                    bltz $t9, ai_block2_dir_invalid
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_block2_dir_invalid
+                    
+                    # Check cell content
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    
+                    lw $s4, human_side		# human stone
+                    beq $s5, $s4, ai_block2_dir_human
+                    lw $s4, human_side
+                    andi $s4, $s4, 1
+                    addi $s4, $s4, 1		# AI stone
+                    beq $s5, $s4, ai_block2_dir_invalid  # AI stone blocks
+                    # Else empty
+                    addi $s2, $s2, 1
+                    j ai_block2_dir_next
+                    
+                    ai_block2_dir_human:
+                        addi $s1, $s1, 1
+                        j ai_block2_dir_next
+                    
+                    ai_block2_dir_invalid:
+                        li $s0, 0
+                        j ai_block2_dir_break
+                    
+                    ai_block2_dir_next:
+                        addi $t3, $t3, 1
+                        li $s6, 3
+                        blt $t3, $s6, ai_block2_dir_check
+                
+                ai_block2_dir_break:
+                # Skip this direction if not promising (has AI stones or not enough human stones)
+                beqz $s0, ai_block2_dir_skip
+                li $s6, 1
+                blt $s1, $s6, ai_block2_dir_skip  # Need at least 1 human stone to consider
+                
+                # Now check for specific blocking patterns
+                li $t3, 0      # offset (0-1)
+                ai_block2_offset_loop:
+                    li $t4, 0  # human stone count
+                    li $t5, -1 # empty x
+                    li $t6, -1 # empty y
+                    li $t7, 0  # step counter
+                    
+                    ai_block2_step_loop:
+                        # Calculate nx = x + (offset + step) * dx[dir]
+                        add $t8, $t3, $t7
+                        la $s6, ai_dir_dx
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dx[dir]
+                        mul $t8, $t8, $s7
+                        add $t8, $t0, $t8     # nx
+                        
+                        # Calculate ny = y + (offset + step) * dy[dir]
+                        add $t9, $t3, $t7
+                        la $s6, ai_dir_dy
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dy[dir]
+                        mul $t9, $t9, $s7
+                        add $t9, $t1, $t9     # ny
+                        
+                        # Check bounds
+                        bltz $t8, ai_block2_step_invalid
+                        lw $s6, SIZE
+                        bge $t8, $s6, ai_block2_step_invalid
+                        bltz $t9, ai_block2_step_invalid
+                        lw $s6, SIZE
+                        bge $t9, $s6, ai_block2_step_invalid
+                        
+                        # Check cell content
+                        lw $s6, SIZE
+                        mul $s7, $t8, $s6
+                        add $s7, $s7, $t9
+                        sll $s7, $s7, 2
+                        lw $s6, board
+                        add $s7, $s6, $s7
+                        lw $s5, 0($s7)        # board[nx][ny]
+                        
+                        lw $s4, human_side		# human stone
+                        beq $s5, $s4, ai_block2_step_human
+                        beqz $s5, ai_block2_step_empty
+                        j ai_block2_step_invalid  # AI stone or other
+                        
+                        ai_block2_step_human:
+                            addi $t4, $t4, 1
+                            j ai_block2_step_next
+                        
+                        ai_block2_step_empty:
+                            li $s4, -1
+                            beq $t5, $s4, ai_block2_set_empty_1
+                            j ai_block2_step_invalid
+                            
+                            ai_block2_set_empty_1:
+                                move $t5, $t8
+                                move $t6, $t9
+                                j ai_block2_step_next
+                        
+                        ai_block2_step_invalid:
+                            li $t4, -1
+                            j ai_block2_step_break
+                        
+                        ai_block2_step_next:
+                            addi $t7, $t7, 1
+                            li $s6, 3
+                            blt $t7, $s6, ai_block2_step_loop
+                    
+                    ai_block2_step_break:
+                    # Check if we found a blocking move (2 human stones and 1 empty)
+                    li $s6, 2
+                    bne $t4, $s6, ai_block2_no_block
+                    li $s6, -1
+                    beq $t5, $s6, ai_block2_no_block
+                    
+    				# ========================= Check meaningful =========================
+                    # head = (x + dx*(offset-1), y + dy*(offset-1))
+                    addi $t9, $t3, -1
+                    
+                    # Get dx, dy
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $t8, 0($s7)            # dx
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)            # dy
+                    
+                    # head_x = x + dx*(offset-1)
+                    mul $s0, $t9, $t8
+                    add $s0, $t0, $s0
+                    # head_y = y + dy*(offset-1)
+                    mul $s1, $t9, $t7
+                    add $s1, $t1, $s1
+                    
+                    # tail = (x + dx*(offset+3), y + dy*(offset+3))
+                    li $s6, 3
+                    add $t9, $t3, $s6
+                    mul $s2, $t9, $t8
+                    add $s2, $t0, $s2
+                    mul $s3, $t9, $t7
+                    add $s3, $t1, $s3
+                    
+                    # Check bounds and board[head] == 0
+                    bltz $s0, ai_block2_no_block
+                    bltz $s1, ai_block2_no_block
+                    lw $s6, SIZE
+                    bge $s0, $s6, ai_block2_no_block
+                    bge $s1, $s6, ai_block2_no_block
+                    
+                    lw $s6, SIZE
+                    mul $s7, $s0, $s6
+                    add $s7, $s7, $s1
+                    sll $s7, $s7, 2
+                    lw $s5, board
+                    add $s7, $s5, $s7
+                    lw $s4, 0($s7)
+                    bnez $s4, ai_block2_no_block
+                    
+                    # Check bounds and board[tail] == 0
+                    bltz $s2, ai_block2_no_block
+                    bltz $s3, ai_block2_no_block
+                    lw $s6, SIZE
+                    bge $s2, $s6, ai_block2_no_block
+                    bge $s3, $s6, ai_block2_no_block
+                    
+                    lw $s6, SIZE
+                    mul $s7, $s2, $s6
+                    add $s7, $s7, $s3
+                    sll $s7, $s7, 2
+                    lw $s5, board
+                    add $s7, $s5, $s7
+                    lw $s4, 0($s7)
+                    bnez $s4, ai_block2_no_block
+                    
+                    # Both ends empty ? meaningful block
+                    la $a0, strP8
+                    li $v0, 4
+                    syscall
+                    move $v0, $t5
+                    move $v1, $t6
+                    j ai_move_done    
+    
+                    ai_block2_no_block:
+                    addi $t3, $t3, 1
+                    li $s6, 1
+                    ble $t3, $s6, ai_block2_offset_loop
+                
+                ai_block2_dir_skip:
+                addi $t2, $t2, 1
+                li $s6, 7
+                ble $t2, $s6, ai_block2_dir_loop
+            
+            addi $t1, $t1, 1
+            lw $s6, SIZE
+            blt $t1, $s6, ai_block2_y_loop
+        
+        addi $t0, $t0, 1
+        lw $s6, SIZE
+        blt $t0, $s6, ai_block2_x_loop
+
+    # =============================================
+    # Priority 9: Build 2 from AI's 1
+    # =============================================
+    li $t0, 0                  # x coordinate
+    ai_build2_x_loop:
+        li $t1, 0              # y coordinate
+        ai_build2_y_loop:
+            li $t2, 0          # direction (0-7)
+            ai_build2_dir_loop:
+                # First check if this direction is worth exploring
+                li $t3, 0      # Check all 2 positions
+                li $s0, 1      # valid flag (1 = valid, 0 = invalid)
+                li $s1, 0      # AI stone count
+                li $s2, 0      # empty count
+                
+                ai_build2_dir_check:
+                    # Calculate nx = x + t3 * dx[dir]
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dx[dir]
+                    mul $t8, $t3, $s7
+                    add $t8, $t0, $t8     # nx
+                    
+                    # Calculate ny = y + t3 * dy[dir]
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $s7, 0($s7)        # dy[dir]
+                    mul $t9, $t3, $s7
+                    add $t9, $t1, $t9     # ny
+                    
+                    # Check bounds
+                    bltz $t8, ai_build2_dir_invalid
+                    lw $s6, SIZE
+                    bge $t8, $s6, ai_build2_dir_invalid
+                    bltz $t9, ai_build2_dir_invalid
+                    lw $s6, SIZE
+                    bge $t9, $s6, ai_build2_dir_invalid
+                    
+                    # Check cell content
+                    lw $s6, SIZE
+                    mul $s7, $t8, $s6
+                    add $s7, $s7, $t9
+                    sll $s7, $s7, 2
+                    lw $s6, board
+                    add $s7, $s6, $s7
+                    lw $s5, 0($s7)        # board[nx][ny]
+                    
+                    lw $s4, human_side
+                    andi $s4, $s4, 1
+                    addi $s4, $s4, 1      # AI stone
+                    beq $s5, $s4, ai_build2_dir_ai
+                    lw $s4, human_side    # human stone
+                    beq $s5, $s4, ai_build2_dir_invalid
+                    # Else empty
+                    addi $s2, $s2, 1
+                    j ai_build2_dir_next
+                    
+                    ai_build2_dir_ai:
+                        addi $s1, $s1, 1
+                        j ai_build2_dir_next
+                    
+                    ai_build2_dir_invalid:
+                        li $s0, 0
+                        j ai_build2_dir_break
+                    
+                    ai_build2_dir_next:
+                        addi $t3, $t3, 1
+                        li $s6, 2
+                        blt $t3, $s6, ai_build2_dir_check
+                
+                ai_build2_dir_break:
+                # Skip this direction if not promising (has human stones or no AI stones)
+                beqz $s0, ai_build2_dir_skip
+                beqz $s1, ai_build2_dir_skip  # Need at least 1 AI stone to consider
+                
+                # Now check for specific build patterns
+                li $t3, 0      # offset (0-1)
+                ai_build2_offset_loop:
+                    li $t4, 0  # AI stone count
+                    li $t5, -1 # empty x
+                    li $t6, -1 # empty y
+                    li $t7, 0  # step counter
+                    
+                    ai_build2_step_loop:
+                        # Calculate nx = x + (offset + step) * dx[dir]
+                        add $t8, $t3, $t7
+                        la $s6, ai_dir_dx
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dx[dir]
+                        mul $t8, $t8, $s7
+                        add $t8, $t0, $t8     # nx
+                        
+                        # Calculate ny = y + (offset + step) * dy[dir]
+                        add $t9, $t3, $t7
+                        la $s6, ai_dir_dy
+                        sll $s7, $t2, 2
+                        add $s7, $s6, $s7
+                        lw $s7, 0($s7)        # dy[dir]
+                        mul $t9, $t9, $s7
+                        add $t9, $t1, $t9     # ny
+                        
+                        # Check bounds
+                        bltz $t8, ai_build2_step_invalid
+                        lw $s6, SIZE
+                        bge $t8, $s6, ai_build2_step_invalid
+                        bltz $t9, ai_build2_step_invalid
+                        lw $s6, SIZE
+                        bge $t9, $s6, ai_build2_step_invalid
+                        
+                        # Check cell content
+                        lw $s6, SIZE
+                        mul $s7, $t8, $s6
+                        add $s7, $s7, $t9
+                        sll $s7, $s7, 2
+                        lw $s6, board
+                        add $s7, $s6, $s7
+                        lw $s5, 0($s7)        # board[nx][ny]
+                        
+                        lw $s4, human_side
+                        andi $s4, $s4, 1
+                        addi $s4, $s4, 1      # AI stone
+                        beq $s5, $s4, ai_build2_step_ai
+                        beqz $s5, ai_build2_step_empty
+                        j ai_build2_step_invalid  # Human stone or other
+                        
+                        ai_build2_step_ai:
+                            addi $t4, $t4, 1
+                            j ai_build2_step_next
+                        
+                        ai_build2_step_empty:
+                            li $s4, -1
+                            beq $t5, $s4, ai_build2_set_empty_1
+                            j ai_build2_step_invalid
+                            
+                            ai_build2_set_empty_1:
+                                move $t5, $t8
+                                move $t6, $t9
+                                j ai_build2_step_next
+                        
+                        ai_build2_step_invalid:
+                            li $t4, -1
+                            j ai_build2_step_break
+                        
+                        ai_build2_step_next:
+                            addi $t7, $t7, 1
+                            li $s6, 2
+                            blt $t7, $s6, ai_build2_step_loop
+                    
+                    ai_build2_step_break:
+                    # Check if we found a build move (1 AI stone and 1 empty)
+                    li $s6, 1
+                    bne $t4, $s6, ai_build2_no_build
+                    li $s6, -1
+                    beq $t5, $s6, ai_build2_no_build
+                    
+    				# ========================= Check meaningful =========================
+                    # Get dx, dy for direction checks
+                    la $s6, ai_dir_dx
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $t8, 0($s7)            # dx
+                    la $s6, ai_dir_dy
+                    sll $s7, $t2, 2
+                    add $s7, $s6, $s7
+                    lw $t7, 0($s7)            # dy
+                    
+                    # Check head (offset -1)
+                    addi $t9, $t3, -1
+                    li $s0, 0                 # head open flag
+                    
+                    # head_x = x + dx*(offset-1)
+                    mul $s1, $t9, $t8
+                    add $s1, $t0, $s1
+                    # head_y = y + dy*(offset-1)
+                    mul $s2, $t9, $t7
+                    add $s2, $t1, $s2
+                    
+                    # Check bounds
+                    bltz $s1, ai_build2_check_tail
+                    bltz $s2, ai_build2_check_tail
+                    lw $s6, SIZE
+                    bge $s1, $s6, ai_build2_check_tail
+                    bge $s2, $s6, ai_build2_check_tail
+                    
+                    # Check if head is empty
+                    lw $s6, SIZE
+                    mul $s7, $s1, $s6
+                    add $s7, $s7, $s2
+                    sll $s7, $s7, 2
+                    lw $s5, board
+                    add $s7, $s5, $s7
+                    lw $s4, 0($s7)
+                    bnez $s4, ai_build2_check_tail
+                    li $s0, 1                 # Head is open
+                    
+                    ai_build2_check_tail:
+                    # Check tail (offset +2)
+                    li $t9, 2
+                    add $t9, $t3, $t9
+                    
+                    # tail_x = x + dx*(offset+2)
+                    mul $s1, $t9, $t8
+                    add $s1, $t0, $s1
+                    # tail_y = y + dy*(offset+2)
+                    mul $s2, $t9, $t7
+                    add $s2, $t1, $s2
+                    
+                    # Check bounds
+                    bltz $s1, ai_build2_check_open
+                    bltz $s2, ai_build2_check_open
+                    lw $s6, SIZE
+                    bge $s1, $s6, ai_build2_check_open
+                    bge $s2, $s6, ai_build2_check_open
+                    
+                    # Check if tail is empty
+                    lw $s6, SIZE
+                    mul $s7, $s1, $s6
+                    add $s7, $s7, $s2
+                    sll $s7, $s7, 2
+                    lw $s5, board
+                    add $s7, $s5, $s7
+                    lw $s4, 0($s7)
+                    bnez $s4, ai_build2_check_open
+                    li $s0, 1                 # Tail is open
+                    
+                    ai_build2_check_open:
+                    # At least one end must be open
+                    beqz $s0, ai_build2_no_build
+                    
+                    # Found valid build move with at least one open end
+                    la $a0, strP9
+                    li $v0, 4
+                    syscall
+                    move $v0, $t5
+                    move $v1, $t6
+                    j ai_move_done
+                    
+                    ai_build2_no_build:
+                    addi $t3, $t3, 1
+                    li $s6, 1
+                    ble $t3, $s6, ai_build2_offset_loop
+                
+                ai_build2_dir_skip:
+                addi $t2, $t2, 1
+                li $s6, 7
+                ble $t2, $s6, ai_build2_dir_loop
+            
+            addi $t1, $t1, 1
+            lw $s6, SIZE
+            blt $t1, $s6, ai_build2_y_loop
+        
+        addi $t0, $t0, 1
+        lw $s6, SIZE
+        blt $t0, $s6, ai_build2_x_loop
+        
+    # =============================================
+    # Priority 10-11-12: Play near human and AI moves
+    # =============================================
+    lw $t0, last_move_x        # Human's last move x
+    lw $t1, last_move_y        # Human's last move y
+    
+    # If no last move (first move), do random move
+    bltz $t0, ai_completely_random_move
+
+	ai_check_directions_after_first_move:
+        # Save critical registers to stack
+        addi $sp, $sp, -48
+        sw $a0, 0($sp)
+        sw $a1, 4($sp)
+        sw $a2, 8($sp)
+        sw $a3, 12($sp)
+        sw $t0, 16($sp)
+        sw $t1, 20($sp)
+        sw $t2, 24($sp)
+        sw $t3, 28($sp)
+        sw $t4, 32($sp)
+        sw $t5, 36($sp)
+        sw $t6, 40($sp)
+        sw $t7, 44($sp)
+        
+        li $s2, 0                  # best_score (0 = none, 1 = near human only, 2 = near both)
+        li $s3, -1                 # best_x
+        li $s4, -1                 # best_y
+        
+        # Allocate space for direction array (8 words = 32 bytes)
+        addi $sp, $sp, -32
+        
+        # Initialize direction array (0-7)
+        li $t2, 0
+    ai_init_dirs:
+        sll $t3, $t2, 2
+        add $t3, $sp, $t3
+        sw $t2, 0($t3)
+        addi $t2, $t2, 1
+        li $t3, 8
+        blt $t2, $t3, ai_init_dirs
+        
+        # Fisher-Yates shuffle for directions
+        li $t2, 0                  # i
+    ai_shuffle_loop:
+        # Generate random index between i and 7
+        li $v0, 42
+        move $a0, $zero
+        li $a1, 8
+        sub $a1, $a1, $t2
+        syscall                    # $a0 = random(0, 7-i)
+        add $a0, $a0, $t2          # $a0 = random(i, 7)
+        
+        # Swap elements i and $a0
+        sll $t3, $t2, 2
+        add $t3, $sp, $t3
+        lw $t4, 0($t3)             # $t4 = dirs[i]
+        
+        sll $t5, $a0, 2
+        add $t5, $sp, $t5
+        lw $t6, 0($t5)             # $t6 = dirs[$a0]
+        
+        sw $t6, 0($t3)             # dirs[i] = dirs[$a0]
+        sw $t4, 0($t5)             # dirs[$a0] = $t4
+        
+        addi $t2, $t2, 1
+        li $t3, 7
+        blt $t2, $t3, ai_shuffle_loop
+        
+        # Check each direction in shuffled order
+        li $t2, 0                  # direction index
+    ai_check_directions:
+        sll $t3, $t2, 2
+        add $t3, $sp, $t3
+        lw $t4, 0($t3)             # $t4 = current direction (0-7)
+        
+        # Get dx/dy for this direction
+        sll $t5, $t4, 2
+        la $t6, ai_dir_dx
+        add $t6, $t6, $t5
+        lw $t7, 0($t6)             # $t7 = dx
+        la $t6, ai_dir_dy
+        add $t6, $t6, $t5
+        lw $t8, 0($t6)             # $t8 = dy
+        
+        # Calculate new position
+        add $t5, $t0, $t7          # x = human_x + dx
+        add $t6, $t1, $t8          # y = human_y + dy
+        
+        # Check bounds
+        bltz $t5, ai_next_dir
+        lw $t7, SIZE
+        bge $t5, $t7, ai_next_dir
+        bltz $t6, ai_next_dir
+        lw $t7, SIZE
+        bge $t6, $t7, ai_next_dir
+        
+        # Check if cell is empty
+        lw $t7, SIZE
+        mul $t8, $t5, $t7
+        add $t8, $t8, $t6
+        sll $t8, $t8, 2
+        lw $t7, board
+        add $t8, $t7, $t8
+        lw $t7, 0($t8)
+        bnez $t7, ai_next_dir
+        
+        # Found empty cell near human - check if also near AI
+        li $t7, 0                  # near_ai flag
+        
+        # Allocate space for AI direction array (8 words = 32 bytes)
+        addi $sp, $sp, -32
+        
+        # Initialize AI direction array (0-7)
+        li $t8, 0
+    ai_init_ai_dirs:
+        sll $t9, $t8, 2
+        add $t9, $sp, $t9
+        sw $t8, 0($t9)
+        addi $t8, $t8, 1
+        li $t9, 8
+        blt $t8, $t9, ai_init_ai_dirs
+        
+        # Fisher-Yates shuffle for AI directions
+        li $t8, 0                  # i
+    ai_shuffle_ai_loop:
+        # Generate random index between i and 7
+        li $v0, 42
+        move $a0, $zero
+        li $a1, 8
+        sub $a1, $a1, $t8
+        syscall                    # $a0 = random(0, 7-i)
+        add $a0, $a0, $t8          # $a0 = random(i, 7)
+        
+        # Swap elements i and $a0
+        sll $t9, $t8, 2
+        add $t9, $sp, $t9
+        lw $a1, 0($t9)             # $a1 = ai_dirs[i]
+        
+        sll $a2, $a0, 2
+        add $a2, $sp, $a2
+        lw $a3, 0($a2)             # $a3 = ai_dirs[$a0]
+        
+        sw $a3, 0($t9)             # ai_dirs[i] = ai_dirs[$a0]
+        sw $a1, 0($a2)             # ai_dirs[$a0] = $a1
+        
+        addi $t8, $t8, 1
+        li $t9, 7
+        blt $t8, $t9, ai_shuffle_ai_loop
+        
+        # Check each AI direction in shuffled order
+        li $t8, 0                  # AI direction index
+    ai_check_ai_directions:
+        sll $t9, $t8, 2
+        add $t9, $sp, $t9
+        lw $a0, 0($t9)             # $a0 = current AI direction (0-7)
+        
+        # Get dx/dy for this direction
+        sll $a1, $a0, 2
+        la $a2, ai_dir_dx
+        add $a2, $a2, $a1
+        lw $a3, 0($a2)             # $a3 = dx
+        la $a2, ai_dir_dy
+        add $a2, $a2, $a1
+        lw $a1, 0($a2)             # $a1 = dy
+        
+        # Calculate neighbor position
+        add $a2, $t5, $a3          # x + dx
+        add $a3, $t6, $a1          # y + dy
+        
+        # Check bounds
+        bltz $a2, ai_next_ai_dir
+        lw $a1, SIZE
+        bge $a2, $a1, ai_next_ai_dir
+        bltz $a3, ai_next_ai_dir
+        lw $a1, SIZE
+        bge $a3, $a1, ai_next_ai_dir
+        
+        # Check if cell contains AI stone (2)
+        lw $a1, SIZE
+        mul $a1, $a2, $a1
+        add $a1, $a1, $a3
+        sll $a1, $a1, 2
+        lw $a2, board
+        add $a1, $a2, $a1
+        lw $a1, 0($a1)
+        
+        lw $a2, human_side
+        andi $a2, $a2, 1
+		addi $a2, $a2, 1	# AI stone
+        bne $a1, $a2, ai_next_ai_dir
+        
+        # Found AI stone nearby
+        li $t7, 1
+        j ai_done_checking_ai
+        
+    ai_next_ai_dir:
+        addi $t8, $t8, 1
+        li $t9, 8
+        blt $t8, $t9, ai_check_ai_directions
+        
+    ai_done_checking_ai:
+        # Clean up AI directions from stack
+        addi $sp, $sp, 32
+        
+        # If near AI, this is our best move
+        bnez $t7, ai_found_best_move
+        
+        # Otherwise, remember as potential move (only near human) if we haven't found one yet
+        li $t7, 1
+        bne $s2, $t7, ai_remember_human_only_move
+        j ai_next_dir
+        
+    ai_remember_human_only_move:
+        li $s2, 1
+        move $s3, $t5
+        move $s4, $t6
+        j ai_next_dir
+        
+    ai_found_best_move:
+        # Found move near both human and AI - take it immediately
+        li $s2, 2
+        lw $a0, ai_phase12
+        beq $a0, 1, phase12_10_reach
+        la $a0, strP10
+		li $v0, 4
+		syscall
+		j phase10_done
+		
+		phase12_10_reach:
+		la $a0, strP12
+		li $v0, 4
+		syscall
+		la $a0, strP10
+		li $v0, 4
+		syscall
+		
+		phase10_done:
+        move $v0, $t5
+        move $v1, $t6
+        
+        # Clean up stack before returning
+        addi $sp, $sp, 32         # Direction array
+        lw $a0, 0($sp)
+        lw $a1, 4($sp)
+        lw $a2, 8($sp)
+        lw $a3, 12($sp)
+        lw $t0, 16($sp)
+        lw $t1, 20($sp)
+        lw $t2, 24($sp)
+        lw $t3, 28($sp)
+        lw $t4, 32($sp)
+        lw $t5, 36($sp)
+        lw $t6, 40($sp)
+        lw $t7, 44($sp)
+        addi $sp, $sp, 48
+        
+        j ai_move_done
+        
+    ai_next_dir:
+        addi $t2, $t2, 1
+        li $t3, 8
+        blt $t2, $t3, ai_check_directions
+        
+    # Clean up directions from stack
+    addi $sp, $sp, 32
+    
+    # Restore critical registers
+    lw $a0, 0($sp)
+    lw $a1, 4($sp)
+    lw $a2, 8($sp)
+    lw $a3, 12($sp)
+    lw $t0, 16($sp)
+    lw $t1, 20($sp)
+    lw $t2, 24($sp)
+    lw $t3, 28($sp)
+    lw $t4, 32($sp)
+    lw $t5, 36($sp)
+    lw $t6, 40($sp)
+    lw $t7, 44($sp)
+    addi $sp, $sp, 48
+    
+    # If we found a move near human only, use that
+    li $t2, 1
+    bne $s2, $t2, ai_try_other_human_moves
+    
+    lw $a0, ai_phase12
+    beq $a0, 1, phase12_11_reach
+    la $a0, strP11
+	li $v0, 4
+	syscall
+	j phase11_done
+	
+	phase12_11_reach:
+	la $a0, strP12
+	li $v0, 4
+	syscall
+	la $a0, strP11
+	li $v0, 4
+	syscall
+	
+	phase11_done:
+    move $v0, $s3
+    move $v1, $s4
+    j ai_move_done
+    
+    ai_try_other_human_moves:
+        # If all cells around last human move are occupied,
+        # pick another random human move and try again
+        li $s5, 0                  # try counter
+        
+        # Count all human moves on board
+        li $s6, 0                  # human move count
+        li $t1, 0                  # row counter
+        
+    ai_count_human_moves_row:
+        li $t2, 0                  # column counter
+    ai_count_human_moves_col:
+        # Calculate board position
+        lw $t3, SIZE
+        mul $t4, $t1, $t3
+        add $t4, $t4, $t2
+        sll $t4, $t4, 2
+        lw $t3, board
+        add $t5, $t3, $t4
+        lw $t6, 0($t5)
+        
+        # Check if human move (1)
+        lw $t7, human_side		# human stone
+        bne $t6, $t7, ai_not_human_move
+        addi $s6, $s6, 1
+        
+    ai_not_human_move:
+        addi $t2, $t2, 1
+        lw $t3, SIZE
+        blt $t2, $t3, ai_count_human_moves_col
+        
+        addi $t1, $t1, 1
+        lw $t3, SIZE
+        blt $t1, $t3, ai_count_human_moves_row
+        
+        # If no human moves, do random move
+        beqz $s6, ai_completely_random_move
+        
+    ai_try_another_human_move:
+        # If we've tried all human moves, do random move
+        bge $s5, $s6, ai_play_near_random_move
+        addi $s5, $s5, 1           # increment try counter
+        
+        # Select random human move index
+        li $v0, 42
+        li $a0, 0
+        move $a1, $s6
+        syscall                    # $a0 = random index 0..(count-1)
+        
+        # Find that human move
+        li $t1, 0                  # current index
+        li $t2, 0                  # row counter
+        
+    ai_find_human_move_row:
+        li $t3, 0                  # column counter
+    ai_find_human_move_col:
+        # Calculate board position
+        lw $t4, SIZE
+        mul $t5, $t2, $t4
+        add $t5, $t5, $t3
+        sll $t5, $t5, 2
+        lw $t4, board
+        add $t6, $t4, $t5
+        lw $t7, 0($t6)
+        
+        # Check if human move (1)
+        lw $t8, human_side		# human stone
+        bne $t7, $t8, ai_not_selected_human_move
+        
+        # Is this the selected move?
+        beq $t1, $a0, ai_found_selected_human_move
+        addi $t1, $t1, 1
+        
+    ai_not_selected_human_move:
+        addi $t3, $t3, 1
+        lw $t4, SIZE
+        blt $t3, $t4, ai_find_human_move_col
+        
+        addi $t2, $t2, 1
+        lw $t4, SIZE
+        blt $t2, $t4, ai_find_human_move_row
+        
+    ai_found_selected_human_move:
+        # Try again with this human move as center
+        li $t0, 1
+		sw $t0, ai_phase12      
+		  
+        move $t0, $t2              # human x
+        move $t1, $t3              # human y
+        
+        j ai_check_directions_after_first_move
+    
+    # =============================================
+    # Priority 13: Play near any random move on board (±2 cells)
+    # =============================================
+    ai_play_near_random_move:
+        # Count all moves on board (human or AI)
+        li $s6, 0                  # total move count
+        li $t1, 0                  # row counter
+
+    ai_count_all_moves_row:
+        li $t2, 0                  # column counter
+    ai_count_all_moves_col:
+        # Calculate board position
+        lw $t3, SIZE
+        mul $t4, $t1, $t3
+        add $t4, $t4, $t2
+        sll $t4, $t4, 2
+        lw $t3, board
+        add $t5, $t3, $t4
+        lw $t6, 0($t5)
+        
+        # Check if any move (1 or 2)
+        beqz $t6, ai_not_any_move
+        addi $s6, $s6, 1
+        
+    ai_not_any_move:
+        addi $t2, $t2, 1
+        lw $t3, SIZE
+        blt $t2, $t3, ai_count_all_moves_col
+        
+        addi $t1, $t1, 1
+        lw $t3, SIZE
+        blt $t1, $t3, ai_count_all_moves_row
+        
+        # If no moves at all, do random move
+        beqz $s6, ai_completely_random_move
+        
+        # Select random move index
+        li $v0, 42
+        li $a0, 0
+        move $a1, $s6
+        syscall                    # $a0 = random index 0..(count-1)
+        
+        # Find that move
+        li $t1, 0                  # current index
+        li $t2, 0                  # row counter
+
+    ai_find_any_move_row:
+        li $t3, 0                  # column counter
+    ai_find_any_move_col:
+        # Calculate board position
+        lw $t4, SIZE
+        mul $t5, $t2, $t4
+        add $t5, $t5, $t3
+        sll $t5, $t5, 2
+        lw $t4, board
+        add $t6, $t4, $t5
+        lw $t7, 0($t6)
+        
+        # Check if any move (1 or 2)
+        beqz $t7, ai_not_selected_any_move
+        
+        # Is this the selected move?
+        beq $t1, $a0, ai_found_selected_any_move
+        addi $t1, $t1, 1
+        
+    ai_not_selected_any_move:
+        addi $t3, $t3, 1
+        lw $t4, SIZE
+        blt $t3, $t4, ai_find_any_move_col
+        
+        addi $t2, $t2, 1
+        lw $t4, SIZE
+        blt $t2, $t4, ai_find_any_move_row
+        
+    ai_found_selected_any_move:
+        # Now look for empty cells within ±2 cells of this move
+        move $t0, $t2              # center x
+        move $t1, $t3              # center y
+        
+        # Save critical registers
+        addi $sp, $sp, -16
+        sw $t0, 0($sp)
+        sw $t1, 4($sp)
+        sw $t2, 8($sp)
+        sw $t3, 12($sp)
+        
+        # Try all positions in a 5x5 square around the center
+        li $t2, -2                 # dx offset (-2 to +2)
+    ai_near_random_dx_loop:
+        li $t3, -2                 # dy offset (-2 to +2)
+    ai_near_random_dy_loop:
+        # Calculate new position
+        add $t4, $t0, $t2          # x = center_x + dx
+        add $t5, $t1, $t3          # y = center_y + dy
+        
+        # Skip center position
+        or $t6, $t2, $t3
+        beqz $t6, ai_near_random_next_dy
+        
+        # Check bounds
+        bltz $t4, ai_near_random_next_dy
+        lw $t6, SIZE
+        bge $t4, $t6, ai_near_random_next_dy
+        bltz $t5, ai_near_random_next_dy
+        lw $t6, SIZE
+        bge $t5, $t6, ai_near_random_next_dy
+        
+        # Check if cell is empty
+        lw $t6, SIZE
+        mul $t7, $t4, $t6
+        add $t7, $t7, $t5
+        sll $t7, $t7, 2
+        lw $t6, board
+        add $t7, $t6, $t7
+        lw $t8, 0($t7)
+        bnez $t8, ai_near_random_next_dy
+        
+        # Found empty cell - use it
+        la $a0, strP13
+		li $v0, 4
+		syscall
+        
+        # Restore registers
+        lw $t0, 0($sp)
+        lw $t1, 4($sp)
+        lw $t2, 8($sp)
+        lw $t3, 12($sp)
+        addi $sp, $sp, 16
+        
+        move $v0, $t4
+        move $v1, $t5
+        j ai_move_done
+        
+    ai_near_random_next_dy:
+        addi $t3, $t3, 1
+        li $t6, 2
+        ble $t3, $t6, ai_near_random_dy_loop
+        
+        addi $t2, $t2, 1
+        li $t6, 2
+        ble $t2, $t6, ai_near_random_dx_loop
+        
+        # No empty cells found in ±2 range - restore registers and try completely random
+        lw $t0, 0($sp)
+        lw $t1, 4($sp)
+        lw $t2, 8($sp)
+        lw $t3, 12($sp)
+        addi $sp, $sp, 16
+
+    # =============================================
+    # Priority 14: Completely random move
+    # =============================================
+    ai_completely_random_move:
+        # As last resort, pick any random empty cell
+    ai_random_loop:
+        # Generate random x and y
+        li $v0, 42
+        li $a0, 0
+        lw $a1, SIZE
+        syscall                    # $a0 = random x
+        move $t0, $a0
+        
+        li $v0, 42
+        li $a0, 0
+        lw $a1, SIZE
+        syscall                    # $a0 = random y
+        move $t1, $a0
+        
+        # Check if cell is empty
+        lw $t2, SIZE
+        mul $t3, $t0, $t2
+        add $t3, $t3, $t1
+        sll $t3, $t3, 2
+        lw $t2, board
+        add $t3, $t2, $t3
+        lw $t4, 0($t3)
+        beqz $t4, ai_found_random_move
+        
+        j ai_random_loop
+        
+    ai_found_random_move:
+        la $a0, strP14
+        li $v0, 4
+		syscall
+        move $v0, $t0
+        move $v1, $t1
+    
+    # =============================================
+    # AI move done
+    # =============================================
+    ai_move_done:
+    sw $v0, ai_move_x
+    sw $v1, ai_move_y
+    
+    lw $s7, 72($sp)
+    lw $s6, 68($sp)
+    lw $s5, 64($sp)
+    lw $s4, 60($sp)
+    lw $s3, 56($sp)
+    lw $s2, 52($sp)
+    lw $s1, 48($sp)
+    lw $s0, 44($sp)
+    lw $t9, 40($sp)
+    lw $t8, 36($sp)
+    lw $t7, 32($sp)
+    lw $t6, 28($sp)
+    lw $t5, 24($sp)
+    lw $t4, 20($sp)
+    lw $t3, 16($sp)
+    lw $t2, 12($sp)
+    lw $t1, 8($sp)
+    lw $t0, 4($sp)
+    lw $ra, 0($sp)
+    addi $sp, $sp, 76  
+.end_macro
