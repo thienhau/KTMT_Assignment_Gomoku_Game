@@ -2,7 +2,7 @@
 
 Mô tả
 -----
-Đây là đồ án trò chơi Gomoku (Caro) được triển khai hoàn toàn bằng Assembly cho kiến trúc MIPS. Mục tiêu của dự án là minh họa cách cài đặt logic trò chơi, quản lý bàn cờ và xử lý nhập liệu/hiển thị cơ bản trong ngôn ngữ Assembly, phục vụ cho bài tập môn Kỹ Thuật Máy Tính.
+Đây là đồ án trò chơi Gomoku (Caro) được triển khai hoàn toàn bằng Assembly cho kiến trúc MIPS với các chế độ như tính thời gian, đánh với máy, chế độ cờ thế. Yêu cầu của dự án là minh họa cách cài đặt logic trò chơi, quản lý bàn cờ và xử lý nhập liệu/hiển thị cơ bản trong ngôn ngữ Assembly, phục vụ cho bài tập lớn môn Kiến Trúc Máy Tính.
 
 Ngôn ngữ
 -------
@@ -19,7 +19,13 @@ Tính năng chính
 - Chơi hai người (local) trên cùng một máy (hot seat).
 - Hiển thị bàn cờ bằng ký tự trong console của MARS.
 - Phát hiện người chiến thắng khi có 5 quân liên tiếp theo hàng ngang, dọc hoặc chéo.
+- Cho phép undo và đầu hàng.
 - Xử lý nhập liệu từ người chơi thông qua cửa sổ console của MARS.
+- Có rất nhiều chế độ:
+  1. Chế độ custom: Người chơi có thể tuỳ chỉnh kích thước bàn cờ, số quân liên tiếp cần để chiến thắng
+  2. Chế độ thời gian: Giảm thời gian cho mỗi nước đi
+  3. Chế độ đánh với bot: Thuật toán đánh với máy đơn giản với 14 mức logic chọn lựa nước đi.
+  4. Chế độ puzzle: Có sẵn các quân trên bàn cờ lúc bắt đầu (cờ thế)
 - Kiến trúc và tổ chức mã theo mô-đun Assembly để dễ theo dõi cho mục đích học tập.
 
 Hướng dẫn chạy (MARS)
